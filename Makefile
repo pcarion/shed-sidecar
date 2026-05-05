@@ -4,11 +4,14 @@ GO ?= go
 
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: all build clean test release-snapshot tag-major tag-minor tag-patch
+.PHONY: all help build clean test release-snapshot tag-major tag-minor tag-patch
 
 all: build
 
-build: $(BIN_DIR)/sidecard $(BIN_DIR)/sidecarctl
+help: ## Show this help.
+	@awk 'BEGIN { FS = ":.*##"; printf "Usage:\n  make <target>\n\nTargets:\n" } /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+
+build: $(BIN_DIR)/sidecard $(BIN_DIR)/sidecarctl ## Build sidecard and sidecarctl into bin/.
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -19,19 +22,19 @@ $(BIN_DIR)/sidecard: $(shell find cmd/sidecard internal -type f -name '*.go') go
 $(BIN_DIR)/sidecarctl: $(shell find cmd/sidecarctl internal -type f -name '*.go') go.mod go.sum | $(BIN_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/sidecarctl
 
-test:
+test: ## Run all Go tests.
 	$(GO) test ./...
 
-release-snapshot:
+release-snapshot: ## Build local snapshot release artifacts with GoReleaser.
 	goreleaser build --snapshot --clean
 
-tag-major:
+tag-major: ## Create and push the next major version tag.
 	$(MAKE) _tag BUMP=major
 
-tag-minor:
+tag-minor: ## Create and push the next minor version tag.
 	$(MAKE) _tag BUMP=minor
 
-tag-patch:
+tag-patch: ## Create and push the next patch version tag.
 	$(MAKE) _tag BUMP=patch
 
 .PHONY: _tag
@@ -53,5 +56,5 @@ _tag:
 	git tag -a "$$tag" -m "Release $$tag"; \
 	git push origin "$$tag"
 
-clean:
+clean: ## Remove generated build and release artifacts.
 	rm -rf $(BIN_DIR) dist
