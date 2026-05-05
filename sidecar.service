@@ -1,0 +1,15 @@
+[Unit]
+Description=Sidecar VM Management Service
+After=network.target dbus.socket
+
+[Service]
+ExecStart=/usr/local/bin/sidecard
+Restart=on-failure
+User=sidecar
+Group=sidecar
+RuntimeDirectory=sidecar
+StateDirectory=sidecar
+ConfigurationDirectory=sidecar
+
+[Install]
+WantedBy=multi-user.target
