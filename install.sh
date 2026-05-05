@@ -54,11 +54,12 @@ if [ -f "$SIDECARCTL_BIN" ]; then
   install -m 0755 "$SIDECARCTL_BIN" /usr/local/bin/sidecarctl
 fi
 
-install -d -m 0750 -o root -g sidecar "$PERSISTENT_DIR"
+install -d -m 0770 -o root -g sidecar "$PERSISTENT_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
   cat >"$CONFIG_FILE" <<'EOF'
 port = 8443
 socket_path = "/run/sidecar/sidecar.sock"
+database_path = "sidecar.db"
 allowed_services = []
 EOF
 fi

@@ -12,6 +12,8 @@ jobs:
   release:
     name: Publish release
     runs-on: ubuntu-latest
+    env:
+      GONOSUMDB: github.com/pcarion/shed-proto
 
     steps:
       - name: Checkout

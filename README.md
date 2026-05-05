@@ -61,25 +61,79 @@ Use a personal access token only if releasing to a different repository or organ
 
 ## Configuration
 
-`sidecard` reads `/etc/sidecar/config.toml` by default. The installer writes `config.toml` to the persistent directory you provide and installs the systemd unit with `--config` pointing at that file:
+`sidecard` reads `/etc/sidecar/config.toml` by default. The installer writes `config.toml` to the persistent directory you provide and installs the systemd unit with `--config` pointing at that file.
+
+Complete `config.toml` format:
+
+```toml
+# TCP port for the localhost gRPC listener.
+# sidecard always binds to 127.0.0.1.
+port = 8443
+
+# Unix socket path for same-VM clients.
+socket_path = "/run/sidecar/sidecar.sock"
+
+# SQLite database path for persisted sidecar state such as passwords.
+# Relative paths are resolved relative to this TOML file.
+database_path = "sidecar.db"
+
+# Optional allow-list for systemd service status queries.
+# Empty means any unit can be queried.
+# Bare names such as "nginx" are treated as "nginx.service".
+allowed_services = []
+```
+
+Example with an allow-list:
 
 ```toml
 port = 8443
 socket_path = "/run/sidecar/sidecar.sock"
-allowed_services = []
+database_path = "state/sidecar.db"
+allowed_services = [
+  "ssh.service",
+  "nginx",
+  "zitadel.service",
+]
 ```
 
-When `allowed_services` is empty, any requested systemd unit can be queried. When it contains unit names, all other services return a per-service error status.
+Fields:
+
+- `port`: Localhost TCP port for the gRPC server. Defaults to `8443`.
+- `socket_path`: Unix socket path. Defaults to `/run/sidecar/sidecar.sock`.
+- `database_path`: SQLite database file. Defaults to `sidecar.db`. Relative paths are resolved relative to the directory containing `config.toml`.
+- `allowed_services`: Optional systemd unit allow-list for `ServiceStatus`. Empty means any unit can be queried. Entries may use full unit names like `nginx.service` or bare service names like `nginx`.
 
 ## CLI
 
 ```sh
 sidecarctl status nginx.service ssh.service
 sidecarctl status --verbose nginx.service
+sidecarctl password get zitadel admin 32 hex-lower
 sidecarctl version
 ```
 
 `sidecarctl status --verbose` sets `include_raw` on `ServiceStatusRequest` and prints the raw `systemctl status` output returned by `sidecard`.
+
+## Passwords
+
+`sidecard` creates a SQLite database at `database_path` and initializes a `passwords` table with these columns:
+
+- `service`
+- `name`
+- `value`
+- `generationDate`
+- `length`
+- `type`
+
+The `PasswordGet` RPC returns an existing password when `service_name`, `name`, `length`, and `type` match an existing row. A different `length` or `type` generates and stores a new password, preserving idempotency for repeated calls with the same request.
+
+The CLI form is:
+
+```sh
+sidecarctl password get <service name> <name> <length> <type>
+```
+
+Supported password types are `lowercase`, `uppercase`, `digit`, `symbol`, `hex-lower`, `hex-upper`, and `uuid-v7`. Short aliases from the proto comments are also accepted: `a`, `A`, `1`, `#`, `h`, `H`, and `u7`.
 
 ## Install From A Release
 
@@ -91,4 +145,4 @@ cd shed-sidecar_<version>_linux_<arch>
 sudo ./install.sh /opt/shed-sidecar
 ```
 
-The release archive includes `sidecard`, `sidecarctl`, `install.sh`, `sidecar.service`, and `README.md`. The script installs the binaries from its own directory, creates the `sidecar` system user, creates `<persistent-dir>/config.toml` if needed, installs `sidecar.service` configured to use that file, and enables the service.
+The release archive includes `sidecard`, `sidecarctl`, `install.sh`, and `README.md`. The script installs the binaries from its own directory, creates the `sidecar` system user, creates `<persistent-dir>/config.toml` if needed, generates `/etc/systemd/system/sidecar.service` configured to use that file, and enables the service.

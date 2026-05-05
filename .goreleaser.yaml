@@ -40,7 +40,6 @@ archives:
       - sidecarctl
     files:
       - install.sh
-      - sidecar.service
       - README.md
     formats:
       - tar.gz

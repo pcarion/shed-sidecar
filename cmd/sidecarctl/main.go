@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&address, "address", address, "sidecard gRPC address")
-	root.AddCommand(statusCommand(), versionCommand())
+	root.AddCommand(statusCommand(), passwordCommand(), versionCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -44,9 +45,9 @@ func statusCommand() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err := dial()
 			if err != nil {
-				return fmt.Errorf("connect to %s: %w", address, err)
+				return err
 			}
 			defer conn.Close()
 
@@ -69,6 +70,54 @@ func statusCommand() *cobra.Command {
 	return cmd
 }
 
+func passwordCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "password",
+		Short: "Manage sidecar passwords",
+	}
+	cmd.AddCommand(passwordGetCommand())
+	return cmd
+}
+
+func passwordGetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <service name> <name> <length> <type>",
+		Short: "Get or create an idempotent password",
+		Args:  cobra.ExactArgs(4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			length64, err := strconv.ParseInt(args[2], 10, 32)
+			if err != nil {
+				return fmt.Errorf("invalid length %q: %w", args[2], err)
+			}
+			passwordType, err := parsePasswordType(args[3])
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).PasswordGet(ctx, &sidecarv1.PasswordGetRequest{
+				ServiceName: args[0],
+				Name:        args[1],
+				Length:      int32(length64),
+				Type:        passwordType,
+			})
+			if err != nil {
+				return fmt.Errorf("password get RPC: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), resp.GetPassword())
+			return nil
+		},
+	}
+}
+
 func versionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -77,6 +126,47 @@ func versionCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Fprintln(cmd.OutOrStdout(), version)
 		},
+	}
+}
+
+func dial() (*grpc.ClientConn, error) {
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("connect to %s: %w", address, err)
+	}
+	return conn, nil
+}
+
+func parsePasswordType(value string) (sidecarv1.PasswordType, error) {
+	trimmed := strings.TrimSpace(value)
+	switch trimmed {
+	case "a":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_LOWERCASE, nil
+	case "A":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE, nil
+	case "h":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER, nil
+	case "H":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_HEX_UPPER, nil
+	}
+
+	switch strings.ToLower(trimmed) {
+	case "lowercase", "lower", "password_type_lowercase":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_LOWERCASE, nil
+	case "uppercase", "upper", "password_type_uppercase":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE, nil
+	case "digit", "digits", "number", "numbers", "1", "password_type_digit":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_DIGIT, nil
+	case "symbol", "symbols", "#", "password_type_symbol":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL, nil
+	case "hex-lower", "hex_lower", "hexlower", "password_type_hex_lower":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER, nil
+	case "hex-upper", "hex_upper", "hexupper", "password_type_hex_upper":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_HEX_UPPER, nil
+	case "uuid-v7", "uuid_v7", "uuidv7", "u7", "password_type_uuid_v7":
+		return sidecarv1.PasswordType_PASSWORD_TYPE_UUID_V7, nil
+	default:
+		return sidecarv1.PasswordType_PASSWORD_TYPE_UNSPECIFIED, fmt.Errorf("unknown password type %q", value)
 	}
 }
 

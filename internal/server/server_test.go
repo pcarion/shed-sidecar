@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
+	"github.com/pcarion/shed-sidecar/internal/passwords"
 	"github.com/pcarion/shed-sidecar/internal/systemd"
 )
 
 type fakeSystemd struct{}
+type fakePasswords struct{}
 
 func (fakeSystemd) Status(_ context.Context, service string, includeRaw bool) (systemd.Status, error) {
 	if service == "bad.service" {
@@ -26,8 +28,12 @@ func (fakeSystemd) Status(_ context.Context, service string, includeRaw bool) (s
 	}, nil
 }
 
+func (fakePasswords) Get(_ context.Context, service, name string, length int32, passwordType sidecarv1.PasswordType) (passwords.Record, error) {
+	return passwords.Record{Value: "secret", IsNew: true}, nil
+}
+
 func TestServiceStatusReturnsPerServiceErrors(t *testing.T) {
-	srv := New(fakeSystemd{}, slog.Default(), nil)
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
 
 	resp, err := srv.ServiceStatus(context.Background(), &sidecarv1.ServiceStatusRequest{
 		Services: []string{"good.service", "bad.service"},
@@ -47,7 +53,7 @@ func TestServiceStatusReturnsPerServiceErrors(t *testing.T) {
 }
 
 func TestServiceStatusAllowsBareNameWhenAllowedListUsesServiceSuffix(t *testing.T) {
-	srv := New(fakeSystemd{}, slog.Default(), []string{"good.service"})
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), []string{"good.service"})
 
 	resp, err := srv.ServiceStatus(context.Background(), &sidecarv1.ServiceStatusRequest{
 		Services: []string{"good"},
@@ -60,5 +66,22 @@ func TestServiceStatusAllowsBareNameWhenAllowedListUsesServiceSuffix(t *testing.
 	}
 	if resp.GetStatuses()[0].GetLoadState() == "error" {
 		t.Fatalf("bare service name was rejected: %+v", resp.GetStatuses()[0])
+	}
+}
+
+func TestPasswordGetReturnsStoredPassword(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.PasswordGet(context.Background(), &sidecarv1.PasswordGetRequest{
+		ServiceName: "svc",
+		Name:        "admin",
+		Length:      16,
+		Type:        sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER,
+	})
+	if err != nil {
+		t.Fatalf("PasswordGet returned error: %v", err)
+	}
+	if resp.GetPassword() != "secret" || !resp.GetIsNew() {
+		t.Fatalf("unexpected response: %+v", resp)
 	}
 }

@@ -5,22 +5,30 @@ import (
 	"log/slog"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
+	"github.com/pcarion/shed-sidecar/internal/passwords"
 	"github.com/pcarion/shed-sidecar/internal/systemd"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type SystemdClient interface {
 	Status(ctx context.Context, service string, includeRaw bool) (systemd.Status, error)
 }
 
+type PasswordStore interface {
+	Get(ctx context.Context, service, name string, length int32, passwordType sidecarv1.PasswordType) (passwords.Record, error)
+}
+
 type Server struct {
 	sidecarv1.UnimplementedSidecarServer
 
 	systemd         SystemdClient
+	passwords       PasswordStore
 	logger          *slog.Logger
 	allowedServices map[string]struct{}
 }
 
-func New(systemdClient SystemdClient, logger *slog.Logger, allowedServices []string) *Server {
+func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.Logger, allowedServices []string) *Server {
 	allowed := map[string]struct{}{}
 	for _, service := range allowedServices {
 		if service != "" {
@@ -30,6 +38,7 @@ func New(systemdClient SystemdClient, logger *slog.Logger, allowedServices []str
 	}
 	return &Server{
 		systemd:         systemdClient,
+		passwords:       passwordStore,
 		logger:          logger,
 		allowedServices: allowed,
 	}
@@ -63,6 +72,20 @@ func (s *Server) ServiceStatus(ctx context.Context, req *sidecarv1.ServiceStatus
 	}
 
 	return resp, nil
+}
+
+func (s *Server) PasswordGet(ctx context.Context, req *sidecarv1.PasswordGetRequest) (*sidecarv1.PasswordGetResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	record, err := s.passwords.Get(ctx, req.GetServiceName(), req.GetName(), req.GetLength(), req.GetType())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.PasswordGetResponse{
+		Password: record.Value,
+		IsNew:    record.IsNew,
+	}, nil
 }
 
 func protoStatus(status systemd.Status, includeRaw bool) *sidecarv1.ServiceStatus {

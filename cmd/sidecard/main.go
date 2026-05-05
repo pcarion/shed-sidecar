@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
 	"github.com/pcarion/shed-sidecar/internal/config"
+	"github.com/pcarion/shed-sidecar/internal/passwords"
 	"github.com/pcarion/shed-sidecar/internal/server"
 	systemdstatus "github.com/pcarion/shed-sidecar/internal/systemd"
 	"google.golang.org/grpc"
@@ -37,8 +39,15 @@ func main() {
 	}
 	defer conn.Close()
 
+	passwordStore, err := passwords.Open(context.Background(), cfg.DatabasePath)
+	if err != nil {
+		logger.Error("open password database", "path", cfg.DatabasePath, "error", err)
+		os.Exit(1)
+	}
+	defer passwordStore.Close()
+
 	grpcServer := grpc.NewServer()
-	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), logger, cfg.AllowedServices))
+	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), passwordStore, logger, cfg.AllowedServices))
 
 	tcpAddress := cfg.TCPAddress()
 	tcpListener, err := net.Listen("tcp", tcpAddress)
@@ -74,7 +83,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	logger.Info("sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath)
+	logger.Info("sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath, "database_path", cfg.DatabasePath)
 
 	select {
 	case sig := <-sigCh:
