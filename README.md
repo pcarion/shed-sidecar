@@ -24,9 +24,10 @@ make release-snapshot
 GitHub Releases are published automatically when a version tag is pushed:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+make tag-patch
 ```
+
+Use `make tag-major`, `make tag-minor`, or `make tag-patch` to create and push the next `v<major>.<minor>.<patch>` tag. The target fetches existing tags, finds the latest semantic version tag, increments the requested version part, and pushes the new tag to `origin`.
 
 The `GoReleaser` workflow creates the release and uploads the Linux `amd64` and `arm64` archives plus checksums.
 
@@ -80,12 +81,14 @@ sidecarctl version
 
 `sidecarctl status --verbose` sets `include_raw` on `ServiceStatusRequest` and prints the raw `systemctl status` output returned by `sidecard`.
 
-## Install
+## Install From A Release
 
-On the target VM, build or copy `sidecard` into the repository root, then run:
+Download and unpack the archive for the target VM from the GitHub Release, then run `install.sh` from the unpacked directory:
 
 ```sh
+tar -xzf shed-sidecar_<version>_linux_<arch>.tar.gz
+cd shed-sidecar_<version>_linux_<arch>
 sudo ./install.sh /opt/shed-sidecar
 ```
 
-The script creates the `sidecar` system user, installs `/usr/local/bin/sidecard`, creates `<persistent-dir>/config.toml` if needed, installs `sidecar.service` configured to use that file, and enables the service.
+The release archive includes `sidecard`, `sidecarctl`, `install.sh`, `sidecar.service`, and `README.md`. The script installs the binaries from its own directory, creates the `sidecar` system user, creates `<persistent-dir>/config.toml` if needed, installs `sidecar.service` configured to use that file, and enables the service.

@@ -38,6 +38,10 @@ archives:
     ids:
       - sidecard
       - sidecarctl
+    files:
+      - install.sh
+      - sidecar.service
+      - README.md
     formats:
       - tar.gz
     name_template: >-

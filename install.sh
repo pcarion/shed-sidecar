@@ -11,6 +11,15 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SIDECARD_BIN="$SCRIPT_DIR/sidecard"
+SIDECARCTL_BIN="$SCRIPT_DIR/sidecarctl"
+
+if [ ! -f "$SIDECARD_BIN" ]; then
+  echo "sidecard binary not found next to install.sh: $SIDECARD_BIN" >&2
+  exit 1
+fi
+
 PERSISTENT_DIR=$1
 case "$PERSISTENT_DIR" in
   /*) ;;
@@ -40,7 +49,10 @@ fi
 
 usermod -aG systemd-journal sidecar
 
-install -m 0755 sidecard /usr/local/bin/sidecard
+install -m 0755 "$SIDECARD_BIN" /usr/local/bin/sidecard
+if [ -f "$SIDECARCTL_BIN" ]; then
+  install -m 0755 "$SIDECARCTL_BIN" /usr/local/bin/sidecarctl
+fi
 
 install -d -m 0750 -o root -g sidecar "$PERSISTENT_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
