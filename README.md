@@ -4,7 +4,7 @@
 
 It builds two binaries:
 
-- `sidecard`: a daemon intended to run under systemd on Ubuntu VMs. It exposes the `sidecar.v1.Sidecar` gRPC service from `github.com/pcarion/shed-proto` on `127.0.0.1:8443` and `/run/sidecar/sidecar.sock`.
+- `sidecard`: a daemon intended to run under systemd on Ubuntu VMs. It exposes the `sidecar.v1.Sidecar` gRPC service from `github.com/pcarion/shed-proto` on `127.0.0.1:50051` and `/run/sidecar/sidecar.sock`.
 - `sidecarctl`: a Cobra CLI for querying a local `sidecard`.
 
 ## Build
@@ -68,7 +68,7 @@ Complete `config.toml` format:
 ```toml
 # TCP port for the localhost gRPC listener.
 # sidecard always binds to 127.0.0.1.
-port = 8443
+port = 50051
 
 # Unix socket path for same-VM clients.
 socket_path = "/run/sidecar/sidecar.sock"
@@ -86,7 +86,7 @@ allowed_services = []
 Example with an allow-list:
 
 ```toml
-port = 8443
+port = 50051
 socket_path = "/run/sidecar/sidecar.sock"
 database_path = "state/sidecar.db"
 allowed_services = [
@@ -98,7 +98,7 @@ allowed_services = [
 
 Fields:
 
-- `port`: Localhost TCP port for the gRPC server. Defaults to `8443`.
+- `port`: Localhost TCP port for the gRPC server. Defaults to `50051`.
 - `socket_path`: Unix socket path. Defaults to `/run/sidecar/sidecar.sock`.
 - `database_path`: SQLite database file. Defaults to `sidecar.db`. Relative paths are resolved relative to the directory containing `config.toml`.
 - `allowed_services`: Optional systemd unit allow-list for `ServiceStatus`. Empty means any unit can be queried. Entries may use full unit names like `nginx.service` or bare service names like `nginx`.
@@ -133,7 +133,17 @@ The CLI form is:
 sidecarctl password get <service name> <name> <length> <type>
 ```
 
-Supported password types are `lowercase`, `uppercase`, `digit`, `symbol`, `hex-lower`, `hex-upper`, and `uuid-v7`. Short aliases from the proto comments are also accepted: `a`, `A`, `1`, `#`, `h`, `H`, and `u7`.
+Supported password types are `lowercase`, `uppercase`, `digit`, `symbol`, `hex-lower`, `hex-upper`, and `uuid-v7`. Short aliases are also accepted: `a`, `A`, `1`, `@`, `h`, `H`, and `u7`.
+
+Password generation policies:
+
+- `a` / `lowercase`: lowercase letters only.
+- `A` / `uppercase`: lowercase and uppercase letters, with at least one uppercase letter.
+- `1` / `digit`: digits only.
+- `@` / `symbol`: lowercase letters, uppercase letters, and special characters, with at least one of each. Special characters exclude `$`, `/`, `\`, `(`, and `)`.
+- `h` / `hex-lower`: lowercase hexadecimal characters.
+- `H` / `hex-upper`: uppercase hexadecimal characters.
+- `u7` / `uuid-v7`: UUIDv7.
 
 ## Install From A Release
 

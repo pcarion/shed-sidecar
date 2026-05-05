@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func TestDefaultPort(t *testing.T) {
+	if got, want := Default().Port, 50051; got != want {
+		t.Fatalf("Default().Port = %d, want %d", got, want)
+	}
+	if got, want := Default().TCPAddress(), "127.0.0.1:50051"; got != want {
+		t.Fatalf("Default().TCPAddress() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadResolvesRelativeDatabasePathAgainstConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

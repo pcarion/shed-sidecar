@@ -57,7 +57,7 @@ fi
 install -d -m 0770 -o root -g sidecar "$PERSISTENT_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
   cat >"$CONFIG_FILE" <<'EOF'
-port = 8443
+port = 50051
 socket_path = "/run/sidecar/sidecar.sock"
 database_path = "sidecar.db"
 allowed_services = []

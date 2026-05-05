@@ -21,7 +21,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		Port:         8443,
+		Port:         50051,
 		SocketPath:   "/run/sidecar/sidecar.sock",
 		DatabasePath: "sidecar.db",
 	}

@@ -11,7 +11,7 @@ func TestParsePasswordType(t *testing.T) {
 		"a":         sidecarv1.PasswordType_PASSWORD_TYPE_LOWERCASE,
 		"A":         sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE,
 		"digits":    sidecarv1.PasswordType_PASSWORD_TYPE_DIGIT,
-		"#":         sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL,
+		"@":         sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL,
 		"h":         sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER,
 		"H":         sidecarv1.PasswordType_PASSWORD_TYPE_HEX_UPPER,
 		"uuid-v7":   sidecarv1.PasswordType_PASSWORD_TYPE_UUID_V7,

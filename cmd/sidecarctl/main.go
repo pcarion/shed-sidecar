@@ -16,7 +16,7 @@ import (
 
 var (
 	version = "dev"
-	address = "127.0.0.1:8443"
+	address = "127.0.0.1:50051"
 )
 
 func main() {
@@ -157,7 +157,7 @@ func parsePasswordType(value string) (sidecarv1.PasswordType, error) {
 		return sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE, nil
 	case "digit", "digits", "number", "numbers", "1", "password_type_digit":
 		return sidecarv1.PasswordType_PASSWORD_TYPE_DIGIT, nil
-	case "symbol", "symbols", "#", "password_type_symbol":
+	case "symbol", "symbols", "@", "password_type_symbol":
 		return sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL, nil
 	case "hex-lower", "hex_lower", "hexlower", "password_type_hex_lower":
 		return sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER, nil

@@ -17,6 +17,15 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	lowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
+	uppercaseAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	digitAlphabet     = "0123456789"
+	symbolAlphabet    = "!@#%^&*_-+=[]{}:,.?"
+	hexLowerAlphabet  = "0123456789abcdef"
+	hexUpperAlphabet  = "0123456789ABCDEF"
+)
+
 type Store struct {
 	db *sql.DB
 }
@@ -148,17 +157,17 @@ func Generate(length int32, passwordType sidecarv1.PasswordType) (string, error)
 	}
 	switch passwordType {
 	case sidecarv1.PasswordType_PASSWORD_TYPE_LOWERCASE:
-		return randomString(normalizedLength, "abcdefghijklmnopqrstuvwxyz")
+		return randomString(normalizedLength, lowercaseAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE:
-		return randomString(normalizedLength, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+		return randomStringWithRequiredSets(normalizedLength, []string{lowercaseAlphabet, uppercaseAlphabet}, lowercaseAlphabet+uppercaseAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_DIGIT:
-		return randomString(normalizedLength, "0123456789")
+		return randomString(normalizedLength, digitAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL:
-		return randomString(normalizedLength, "!@#$%^&*()-_=+[]{}:,.?")
+		return randomStringWithRequiredSets(normalizedLength, []string{lowercaseAlphabet, uppercaseAlphabet, symbolAlphabet}, lowercaseAlphabet+uppercaseAlphabet+symbolAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_HEX_LOWER:
-		return randomString(normalizedLength, "0123456789abcdef")
+		return randomString(normalizedLength, hexLowerAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_HEX_UPPER:
-		return randomString(normalizedLength, "0123456789ABCDEF")
+		return randomString(normalizedLength, hexUpperAlphabet)
 	case sidecarv1.PasswordType_PASSWORD_TYPE_UUID_V7:
 		return uuidV7()
 	default:
@@ -197,6 +206,52 @@ func randomString(length int32, alphabet string) (string, error) {
 		b.WriteByte(alphabet[n.Int64()])
 	}
 	return b.String(), nil
+}
+
+func randomStringWithRequiredSets(length int32, requiredSets []string, alphabet string) (string, error) {
+	if length < int32(len(requiredSets)) {
+		return "", fmt.Errorf("password length must be at least %d for requested type", len(requiredSets))
+	}
+	out := make([]byte, length)
+	for i, set := range requiredSets {
+		ch, err := randomByte(set)
+		if err != nil {
+			return "", err
+		}
+		out[i] = ch
+	}
+	for i := len(requiredSets); i < int(length); i++ {
+		ch, err := randomByte(alphabet)
+		if err != nil {
+			return "", err
+		}
+		out[i] = ch
+	}
+	if err := shuffle(out); err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func randomByte(alphabet string) (byte, error) {
+	max := big.NewInt(int64(len(alphabet)))
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		return 0, fmt.Errorf("generate random value: %w", err)
+	}
+	return alphabet[n.Int64()], nil
+}
+
+func shuffle(out []byte) error {
+	for i := len(out) - 1; i > 0; i-- {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return fmt.Errorf("shuffle password: %w", err)
+		}
+		j := int(n.Int64())
+		out[i], out[j] = out[j], out[i]
+	}
+	return nil
 }
 
 func uuidV7() (string, error) {

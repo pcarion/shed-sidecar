@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+	"unicode"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
 )
@@ -102,6 +104,55 @@ func TestGenerateUUIDV7RejectsNonUUIDLength(t *testing.T) {
 	}
 }
 
+func TestGenerateLowercaseOnly(t *testing.T) {
+	value, err := Generate(64, sidecarv1.PasswordType_PASSWORD_TYPE_LOWERCASE)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	for _, r := range value {
+		if r < 'a' || r > 'z' {
+			t.Fatalf("generated value contains non-lowercase character %q in %q", r, value)
+		}
+	}
+}
+
+func TestGenerateUppercaseIncludesLowercaseAndUppercase(t *testing.T) {
+	value, err := Generate(64, sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if !containsLower(value) || !containsUpper(value) {
+		t.Fatalf("generated value does not contain lower and upper case: %q", value)
+	}
+	for _, r := range value {
+		if !unicode.IsLower(r) && !unicode.IsUpper(r) {
+			t.Fatalf("generated value contains unexpected character %q in %q", r, value)
+		}
+	}
+}
+
+func TestGenerateSymbolPolicy(t *testing.T) {
+	value, err := Generate(64, sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if !containsLower(value) || !containsUpper(value) || !containsAny(value, symbolAlphabet) {
+		t.Fatalf("generated value does not contain lower, upper, and symbol: %q", value)
+	}
+	if strings.ContainsAny(value, `$/\()`) {
+		t.Fatalf("generated value contains excluded special character: %q", value)
+	}
+}
+
+func TestGenerateRequiredSetLengthValidation(t *testing.T) {
+	if _, err := Generate(1, sidecarv1.PasswordType_PASSWORD_TYPE_UPPERCASE); err == nil {
+		t.Fatal("Generate returned nil error for uppercase policy length 1")
+	}
+	if _, err := Generate(2, sidecarv1.PasswordType_PASSWORD_TYPE_SYMBOL); err == nil {
+		t.Fatal("Generate returned nil error for symbol policy length 2")
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "sidecar.db"))
@@ -109,4 +160,31 @@ func openTestStore(t *testing.T) *Store {
 		t.Fatalf("Open returned error: %v", err)
 	}
 	return store
+}
+
+func containsLower(value string) bool {
+	for _, r := range value {
+		if unicode.IsLower(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsUpper(value string) bool {
+	for _, r := range value {
+		if unicode.IsUpper(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(value, chars string) bool {
+	for _, r := range value {
+		if strings.ContainsRune(chars, r) {
+			return true
+		}
+	}
+	return false
 }
