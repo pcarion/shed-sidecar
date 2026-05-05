@@ -45,3 +45,20 @@ func TestServiceStatusReturnsPerServiceErrors(t *testing.T) {
 		t.Fatalf("bad service did not return per-service error: %+v", resp.GetStatuses()[1])
 	}
 }
+
+func TestServiceStatusAllowsBareNameWhenAllowedListUsesServiceSuffix(t *testing.T) {
+	srv := New(fakeSystemd{}, slog.Default(), []string{"good.service"})
+
+	resp, err := srv.ServiceStatus(context.Background(), &sidecarv1.ServiceStatusRequest{
+		Services: []string{"good"},
+	})
+	if err != nil {
+		t.Fatalf("ServiceStatus returned RPC error: %v", err)
+	}
+	if len(resp.GetStatuses()) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(resp.GetStatuses()))
+	}
+	if resp.GetStatuses()[0].GetLoadState() == "error" {
+		t.Fatalf("bare service name was rejected: %+v", resp.GetStatuses()[0])
+	}
+}

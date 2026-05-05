@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -17,6 +18,20 @@ const (
 	serviceInterface   = "org.freedesktop.systemd1.Service"
 	propertiesGet      = "org.freedesktop.DBus.Properties.Get"
 )
+
+var knownUnitSuffixes = []string{
+	".automount",
+	".device",
+	".mount",
+	".path",
+	".scope",
+	".service",
+	".slice",
+	".socket",
+	".swap",
+	".target",
+	".timer",
+}
 
 type Status struct {
 	Name        string
@@ -55,10 +70,11 @@ func (c *Client) Status(ctx context.Context, service string, includeRaw bool) (S
 	if service == "" {
 		return Status{}, errors.New("service name is empty")
 	}
+	unitName := NormalizeUnitName(service)
 
 	manager := c.conn.Object(systemdDestination, managerPath)
 	var unitPath dbus.ObjectPath
-	if err := manager.CallWithContext(ctx, managerInterface+".LoadUnit", 0, service).Store(&unitPath); err != nil {
+	if err := manager.CallWithContext(ctx, managerInterface+".LoadUnit", 0, unitName).Store(&unitPath); err != nil {
 		return Status{Name: service}, fmt.Errorf("load unit %q: %w", service, err)
 	}
 
@@ -85,7 +101,7 @@ func (c *Client) Status(ctx context.Context, service string, includeRaw bool) (S
 	}
 
 	if includeRaw {
-		raw, err := rawStatus(ctx, service)
+		raw, err := rawStatus(ctx, unitName)
 		if err != nil && raw == "" {
 			return status, err
 		}
@@ -93,6 +109,15 @@ func (c *Client) Status(ctx context.Context, service string, includeRaw bool) (S
 	}
 
 	return status, nil
+}
+
+func NormalizeUnitName(name string) string {
+	for _, suffix := range knownUnitSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return name
+		}
+	}
+	return name + ".service"
 }
 
 func stringProperty(ctx context.Context, obj dbus.BusObject, iface, name string) (string, error) {

@@ -17,7 +17,8 @@ func (f fakeConn) Object(_ string, path dbus.ObjectPath) dbus.BusObject {
 }
 
 type fakeObject struct {
-	calls map[string]*dbus.Call
+	calls    map[string]*dbus.Call
+	lastArgs []interface{}
 }
 
 func (f *fakeObject) Call(method string, flags dbus.Flags, args ...interface{}) *dbus.Call {
@@ -70,6 +71,7 @@ func (f *fakeObject) Path() dbus.ObjectPath {
 }
 
 func (f *fakeObject) call(method string, args ...interface{}) *dbus.Call {
+	f.lastArgs = args
 	key := method
 	if method == propertiesGet && len(args) == 2 {
 		key = method + "." + args[0].(string) + "." + args[1].(string)
@@ -82,12 +84,13 @@ func (f *fakeObject) call(method string, args ...interface{}) *dbus.Call {
 
 func TestStatusReadsUnitProperties(t *testing.T) {
 	unitPath := dbus.ObjectPath("/org/freedesktop/systemd1/unit/test_2eservice")
-	client := NewClient(fakeConn{objects: map[dbus.ObjectPath]*fakeObject{
-		managerPath: {
-			calls: map[string]*dbus.Call{
-				managerInterface + ".LoadUnit": {Body: []interface{}{unitPath}},
-			},
+	manager := &fakeObject{
+		calls: map[string]*dbus.Call{
+			managerInterface + ".LoadUnit": {Body: []interface{}{unitPath}},
 		},
+	}
+	client := NewClient(fakeConn{objects: map[dbus.ObjectPath]*fakeObject{
+		managerPath: manager,
 		unitPath: {
 			calls: map[string]*dbus.Call{
 				propertiesGet + "." + unitInterface + ".LoadState":   variantCall("loaded"),
@@ -108,6 +111,41 @@ func TestStatusReadsUnitProperties(t *testing.T) {
 	}
 	if status.Raw != "" {
 		t.Fatalf("raw status was populated without includeRaw: %q", status.Raw)
+	}
+	if got, want := manager.lastArgs[0].(string), "test.service"; got != want {
+		t.Fatalf("LoadUnit used %q, want %q", got, want)
+	}
+}
+
+func TestStatusNormalizesBareServiceName(t *testing.T) {
+	unitPath := dbus.ObjectPath("/org/freedesktop/systemd1/unit/zitadel_2eservice")
+	manager := &fakeObject{
+		calls: map[string]*dbus.Call{
+			managerInterface + ".LoadUnit": {Body: []interface{}{unitPath}},
+		},
+	}
+	client := NewClient(fakeConn{objects: map[dbus.ObjectPath]*fakeObject{
+		managerPath: manager,
+		unitPath: {
+			calls: map[string]*dbus.Call{
+				propertiesGet + "." + unitInterface + ".LoadState":   variantCall("loaded"),
+				propertiesGet + "." + unitInterface + ".ActiveState": variantCall("active"),
+				propertiesGet + "." + unitInterface + ".SubState":    variantCall("exited"),
+				propertiesGet + "." + unitInterface + ".Description": variantCall("Suite zitadel"),
+				propertiesGet + "." + serviceInterface + ".MainPID":  variantCall(uint32(2677)),
+			},
+		},
+	}})
+
+	status, err := client.Status(context.Background(), "zitadel", false)
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if status.Name != "zitadel" {
+		t.Fatalf("status name = %q, want requested name", status.Name)
+	}
+	if got, want := manager.lastArgs[0].(string), "zitadel.service"; got != want {
+		t.Fatalf("LoadUnit used %q, want %q", got, want)
 	}
 }
 

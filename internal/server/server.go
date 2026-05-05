@@ -25,6 +25,7 @@ func New(systemdClient SystemdClient, logger *slog.Logger, allowedServices []str
 	for _, service := range allowedServices {
 		if service != "" {
 			allowed[service] = struct{}{}
+			allowed[systemd.NormalizeUnitName(service)] = struct{}{}
 		}
 	}
 	return &Server{
@@ -43,8 +44,10 @@ func (s *Server) ServiceStatus(ctx context.Context, req *sidecarv1.ServiceStatus
 	for _, service := range req.GetServices() {
 		if len(s.allowedServices) > 0 {
 			if _, ok := s.allowedServices[service]; !ok {
-				resp.Statuses = append(resp.Statuses, errorStatus(service, "service is not allowed by sidecar config"))
-				continue
+				if _, ok := s.allowedServices[systemd.NormalizeUnitName(service)]; !ok {
+					resp.Statuses = append(resp.Statuses, errorStatus(service, "service is not allowed by sidecar config"))
+					continue
+				}
 			}
 		}
 
