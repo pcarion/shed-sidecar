@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,10 @@ const (
 )
 
 type Store struct {
-	db *sql.DB
+	db             *sql.DB
+	networkPortMin int
+	networkPortMax int
+	portAvailable  func(int) bool
 }
 
 type Record struct {
@@ -35,9 +39,33 @@ type Record struct {
 	IsNew bool
 }
 
-func Open(ctx context.Context, path string) (*Store, error) {
+type NetworkPortRange struct {
+	Min int
+	Max int
+}
+
+type Entry struct {
+	Service string
+	Name    string
+	Value   string
+}
+
+type NetworkEntry struct {
+	Service string
+	Name    string
+	Port    int32
+}
+
+func Open(ctx context.Context, path string, ranges ...NetworkPortRange) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("database path is empty")
+	}
+	portRange := NetworkPortRange{Min: 20000, Max: 29999}
+	if len(ranges) > 0 {
+		portRange = ranges[0]
+	}
+	if portRange.Min < 1 || portRange.Max > 65535 || portRange.Min > portRange.Max {
+		return nil, fmt.Errorf("invalid network port range %d-%d", portRange.Min, portRange.Max)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
@@ -46,7 +74,12 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
-	store := &Store{db: db}
+	store := &Store{
+		db:             db,
+		networkPortMin: portRange.Min,
+		networkPortMax: portRange.Max,
+		portAvailable:  portAvailable,
+	}
 	if err := store.init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -114,6 +147,132 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 	return Record{Value: value, IsNew: true}, nil
 }
 
+func (s *Store) Read(ctx context.Context, service, name string) (string, bool, error) {
+	if strings.TrimSpace(service) == "" {
+		return "", false, errors.New("service name is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", false, errors.New("password name is required")
+	}
+
+	var value string
+	err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM passwords
+WHERE service = ? AND name = ?
+ORDER BY generationDate DESC, rowid DESC
+LIMIT 1`,
+		service,
+		name,
+	).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read password: %w", err)
+	}
+	return value, true, nil
+}
+
+func (s *Store) List(ctx context.Context) ([]Entry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT service, name, value
+FROM passwords
+ORDER BY service ASC, name ASC, generationDate ASC, rowid ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list passwords: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []Entry
+	for rows.Next() {
+		var entry Entry
+		if err := rows.Scan(&entry.Service, &entry.Name, &entry.Value); err != nil {
+			return nil, fmt.Errorf("scan password: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate passwords: %w", err)
+	}
+	return entries, nil
+}
+
+func (s *Store) NetworkPortGet(ctx context.Context, service, name string) (NetworkEntry, bool, error) {
+	if strings.TrimSpace(service) == "" {
+		return NetworkEntry{}, false, errors.New("service name is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return NetworkEntry{}, false, errors.New("network port name is required")
+	}
+
+	if entry, ok, err := s.networkPortLookup(ctx, service, name); err != nil {
+		return NetworkEntry{}, false, err
+	} else if ok {
+		return entry, false, nil
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		port, ok, err := s.firstAvailableNetworkPort(ctx)
+		if err != nil {
+			return NetworkEntry{}, false, err
+		}
+		if !ok {
+			return NetworkEntry{}, false, fmt.Errorf("no available network port in range %d-%d", s.networkPortMin, s.networkPortMax)
+		}
+
+		result, err := s.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO network_ports (service, name, port, generationDate)
+VALUES (?, ?, ?, ?)`,
+			service,
+			name,
+			port,
+			time.Now().UTC().Format(time.RFC3339),
+		)
+		if err != nil {
+			return NetworkEntry{}, false, fmt.Errorf("insert network port: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return NetworkEntry{}, false, fmt.Errorf("read inserted network port count: %w", err)
+		}
+		if rows == 1 {
+			return NetworkEntry{Service: service, Name: name, Port: int32(port)}, true, nil
+		}
+		if entry, ok, err := s.networkPortLookup(ctx, service, name); err != nil {
+			return NetworkEntry{}, false, err
+		} else if ok {
+			return entry, false, nil
+		}
+	}
+
+	return NetworkEntry{}, false, errors.New("network port allocation conflicted too many times")
+}
+
+func (s *Store) NetworkList(ctx context.Context) ([]NetworkEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT service, name, port
+FROM network_ports
+ORDER BY service ASC, name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list network ports: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []NetworkEntry
+	for rows.Next() {
+		var entry NetworkEntry
+		if err := rows.Scan(&entry.Service, &entry.Name, &entry.Port); err != nil {
+			return nil, fmt.Errorf("scan network port: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate network ports: %w", err)
+	}
+	return entries, nil
+}
+
 func (s *Store) init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS passwords (
@@ -127,7 +286,77 @@ CREATE TABLE IF NOT EXISTS passwords (
 )`); err != nil {
 		return fmt.Errorf("create passwords table: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS network_ports (
+	service TEXT NOT NULL,
+	name TEXT NOT NULL,
+	port INTEGER NOT NULL,
+	generationDate TEXT NOT NULL,
+	UNIQUE (service, name),
+	UNIQUE (port)
+)`); err != nil {
+		return fmt.Errorf("create network_ports table: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) networkPortLookup(ctx context.Context, service, name string) (NetworkEntry, bool, error) {
+	var entry NetworkEntry
+	err := s.db.QueryRowContext(ctx, `
+SELECT service, name, port
+FROM network_ports
+WHERE service = ? AND name = ?`,
+		service,
+		name,
+	).Scan(&entry.Service, &entry.Name, &entry.Port)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NetworkEntry{}, false, nil
+	}
+	if err != nil {
+		return NetworkEntry{}, false, fmt.Errorf("lookup network port: %w", err)
+	}
+	return entry, true, nil
+}
+
+func (s *Store) firstAvailableNetworkPort(ctx context.Context) (int, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT port
+FROM network_ports
+WHERE port BETWEEN ? AND ?
+ORDER BY port ASC`,
+		s.networkPortMin,
+		s.networkPortMax,
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("query used network ports: %w", err)
+	}
+	defer rows.Close()
+
+	used := map[int]struct{}{}
+	for rows.Next() {
+		var port int
+		if err := rows.Scan(&port); err != nil {
+			return 0, false, fmt.Errorf("scan used network port: %w", err)
+		}
+		used[port] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, fmt.Errorf("iterate used network ports: %w", err)
+	}
+
+	for port := s.networkPortMin; port <= s.networkPortMax; port++ {
+		if _, ok := used[port]; ok {
+			continue
+		}
+		if s.isNetworkPortAvailable(port) {
+			return port, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func (s *Store) isNetworkPortAvailable(port int) bool {
+	return s.portAvailable == nil || s.portAvailable(port)
 }
 
 func (s *Store) lookup(ctx context.Context, service, name string, length int32, passwordType sidecarv1.PasswordType) (string, bool, error) {
@@ -252,6 +481,15 @@ func shuffle(out []byte) error {
 		out[i], out[j] = out[j], out[i]
 	}
 	return nil
+}
+
+func portAvailable(port int) bool {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
 }
 
 func uuidV7() (string, error) {

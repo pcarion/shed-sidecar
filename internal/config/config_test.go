@@ -15,6 +15,15 @@ func TestDefaultPort(t *testing.T) {
 	}
 }
 
+func TestDefaultNetworkPortRange(t *testing.T) {
+	if got, want := Default().NetworkPortMin, 20000; got != want {
+		t.Fatalf("Default().NetworkPortMin = %d, want %d", got, want)
+	}
+	if got, want := Default().NetworkPortMax, 29999; got != want {
+		t.Fatalf("Default().NetworkPortMax = %d, want %d", got, want)
+	}
+}
+
 func TestLoadResolvesRelativeDatabasePathAgainstConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -43,5 +52,17 @@ func TestLoadResolvesDefaultDatabasePathWhenConfigIsMissing(t *testing.T) {
 	want := filepath.Join(dir, "sidecar.db")
 	if cfg.DatabasePath != want {
 		t.Fatalf("DatabasePath = %q, want %q", cfg.DatabasePath, want)
+	}
+}
+
+func TestLoadRejectsInvalidNetworkPortRange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("network_port_min = 30000\nnetwork_port_max = 20000\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load returned nil error for invalid network port range")
 	}
 }

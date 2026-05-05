@@ -77,6 +77,10 @@ socket_path = "/run/sidecar/sidecar.sock"
 # Relative paths are resolved relative to this TOML file.
 database_path = "sidecar.db"
 
+# Inclusive range used for idempotent network port allocation.
+network_port_min = 20000
+network_port_max = 29999
+
 # Optional allow-list for systemd service status queries.
 # Empty means any unit can be queried.
 # Bare names such as "nginx" are treated as "nginx.service".
@@ -89,6 +93,8 @@ Example with an allow-list:
 port = 50051
 socket_path = "/run/sidecar/sidecar.sock"
 database_path = "state/sidecar.db"
+network_port_min = 20000
+network_port_max = 29999
 allowed_services = [
   "ssh.service",
   "nginx",
@@ -101,18 +107,81 @@ Fields:
 - `port`: Localhost TCP port for the gRPC server. Defaults to `50051`.
 - `socket_path`: Unix socket path. Defaults to `/run/sidecar/sidecar.sock`.
 - `database_path`: SQLite database file. Defaults to `sidecar.db`. Relative paths are resolved relative to the directory containing `config.toml`.
+- `network_port_min`: First port in the inclusive allocation range. Defaults to `20000`.
+- `network_port_max`: Last port in the inclusive allocation range. Defaults to `29999`.
 - `allowed_services`: Optional systemd unit allow-list for `ServiceStatus`. Empty means any unit can be queried. Entries may use full unit names like `nginx.service` or bare service names like `nginx`.
 
 ## CLI
 
+`sidecarctl` talks to the local `sidecard` gRPC listener. By default it connects to `127.0.0.1:50051`; use `--address` to point it at a different local endpoint:
+
 ```sh
-sidecarctl status nginx.service ssh.service
-sidecarctl status --verbose nginx.service
-sidecarctl password get zitadel admin 32 hex-lower
-sidecarctl version
+sidecarctl --address 127.0.0.1:50051 <command>
 ```
 
-`sidecarctl status --verbose` sets `include_raw` on `ServiceStatusRequest` and prints the raw `systemctl status` output returned by `sidecard`.
+### Service Status
+
+Query one or more systemd units:
+
+```sh
+sidecarctl status nginx.service ssh.service
+```
+
+Bare service names are accepted by the daemon and treated as `.service` units:
+
+```sh
+sidecarctl status nginx
+```
+
+The normal output is a compact table with a state symbol, service name, active state, sub state, and description. Use `--verbose` to request and print raw `systemctl status` output:
+
+```sh
+sidecarctl status --verbose nginx.service
+```
+
+### Passwords
+
+Create or return an idempotent password:
+
+```sh
+sidecarctl password get zitadel admin 32 hex-lower
+```
+
+Read an existing password without creating it:
+
+```sh
+sidecarctl password read zitadel admin
+```
+
+List stored passwords:
+
+```sh
+sidecarctl password list
+```
+
+### Network Ports
+
+Allocate or return an idempotent network port:
+
+```sh
+sidecarctl network port get zitadel http
+```
+
+List stored network port allocations:
+
+```sh
+sidecarctl network port list
+```
+
+`sidecarctl network list` is also accepted as a shorthand.
+
+### Version
+
+Print the build version:
+
+```sh
+sidecarctl version
+```
 
 ## Passwords
 
@@ -125,12 +194,14 @@ sidecarctl version
 - `length`
 - `type`
 
-The `PasswordGet` RPC returns an existing password when `service_name`, `name`, `length`, and `type` match an existing row. A different `length` or `type` generates and stores a new password, preserving idempotency for repeated calls with the same request.
+The `PasswordGet` RPC returns an existing password when `service_name`, `name`, `length`, and `type` match an existing row. A different `length` or `type` generates and stores a new password, preserving idempotency for repeated calls with the same request. `PasswordRead` returns a stored password by service/name without creating one. `PasswordList` returns all stored passwords grouped by service name.
 
-The CLI form is:
+The CLI forms are:
 
 ```sh
 sidecarctl password get <service name> <name> <length> <type>
+sidecarctl password read <service name> <name>
+sidecarctl password list
 ```
 
 Supported password types are `lowercase`, `uppercase`, `digit`, `symbol`, `hex-lower`, `hex-upper`, and `uuid-v7`. Short aliases are also accepted: `a`, `A`, `1`, `@`, `h`, `H`, and `u7`.
@@ -144,6 +215,24 @@ Password generation policies:
 - `h` / `hex-lower`: lowercase hexadecimal characters.
 - `H` / `hex-upper`: uppercase hexadecimal characters.
 - `u7` / `uuid-v7`: UUIDv7.
+
+## Network Ports
+
+`sidecard` also initializes a `network_ports` table with these columns:
+
+- `service`
+- `name`
+- `port`
+- `generationDate`
+
+`NetworkPortGet` returns the same stored port every time `service_name` and `name` match an existing row. New allocations find the first port in the configured inclusive range that is not already stored in `network_ports` and is not currently bound on the VM, then store it with unique constraints on `(service, name)` and `port`. If another process takes the selected port concurrently, the allocation retries up to three times.
+
+The CLI forms are:
+
+```sh
+sidecarctl network port get <service name> <name>
+sidecarctl network port list
+```
 
 ## Install From A Release
 

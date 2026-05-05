@@ -49,6 +49,10 @@ fi
 
 usermod -aG systemd-journal sidecar
 
+if systemctl list-unit-files sidecar.service >/dev/null 2>&1; then
+  systemctl stop sidecar.service
+fi
+
 install -m 0755 "$SIDECARD_BIN" /usr/local/bin/sidecard
 if [ -f "$SIDECARCTL_BIN" ]; then
   install -m 0755 "$SIDECARCTL_BIN" /usr/local/bin/sidecarctl
@@ -60,6 +64,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
 port = 50051
 socket_path = "/run/sidecar/sidecar.sock"
 database_path = "sidecar.db"
+network_port_min = 20000
+network_port_max = 29999
 allowed_services = []
 EOF
 fi

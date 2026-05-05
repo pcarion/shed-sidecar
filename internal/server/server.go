@@ -17,6 +17,10 @@ type SystemdClient interface {
 
 type PasswordStore interface {
 	Get(ctx context.Context, service, name string, length int32, passwordType sidecarv1.PasswordType) (passwords.Record, error)
+	Read(ctx context.Context, service, name string) (string, bool, error)
+	List(ctx context.Context) ([]passwords.Entry, error)
+	NetworkPortGet(ctx context.Context, service, name string) (passwords.NetworkEntry, bool, error)
+	NetworkList(ctx context.Context) ([]passwords.NetworkEntry, error)
 }
 
 type Server struct {
@@ -86,6 +90,79 @@ func (s *Server) PasswordGet(ctx context.Context, req *sidecarv1.PasswordGetRequ
 		Password: record.Value,
 		IsNew:    record.IsNew,
 	}, nil
+}
+
+func (s *Server) PasswordRead(ctx context.Context, req *sidecarv1.PasswordReadRequest) (*sidecarv1.PasswordReadResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	value, ok, err := s.passwords.Read(ctx, req.GetServiceName(), req.GetName())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.PasswordReadResponse{
+		Password: value,
+		IsOk:     ok,
+	}, nil
+}
+
+func (s *Server) PasswordList(ctx context.Context, req *sidecarv1.PasswordListRequest) (*sidecarv1.PasswordListResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	entries, err := s.passwords.List(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	resp := &sidecarv1.PasswordListResponse{}
+	var current *sidecarv1.PasswordService
+	for _, entry := range entries {
+		if current == nil || current.ServiceName != entry.Service {
+			current = &sidecarv1.PasswordService{ServiceName: entry.Service}
+			resp.Services = append(resp.Services, current)
+		}
+		current.Passwords = append(current.Passwords, &sidecarv1.PasswordEntry{
+			Name:     entry.Name,
+			Password: entry.Value,
+		})
+	}
+	return resp, nil
+}
+
+func (s *Server) NetworkPortGet(ctx context.Context, req *sidecarv1.NetworkPortGetRequest) (*sidecarv1.NetworkPortGetResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	entry, isNew, err := s.passwords.NetworkPortGet(ctx, req.GetServiceName(), req.GetName())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.NetworkPortGetResponse{
+		Port:  entry.Port,
+		IsNew: isNew,
+	}, nil
+}
+
+func (s *Server) NetworkList(ctx context.Context, req *sidecarv1.NetworkListRequest) (*sidecarv1.NetworkListResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	entries, err := s.passwords.NetworkList(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	resp := &sidecarv1.NetworkListResponse{
+		Networks: make([]*sidecarv1.NetworkEntry, 0, len(entries)),
+	}
+	for _, entry := range entries {
+		resp.Networks = append(resp.Networks, &sidecarv1.NetworkEntry{
+			ServiceName: entry.Service,
+			Name:        entry.Name,
+			Port:        entry.Port,
+		})
+	}
+	return resp, nil
 }
 
 func protoStatus(status systemd.Status, includeRaw bool) *sidecarv1.ServiceStatus {

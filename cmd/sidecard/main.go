@@ -39,7 +39,10 @@ func main() {
 	}
 	defer conn.Close()
 
-	passwordStore, err := passwords.Open(context.Background(), cfg.DatabasePath)
+	passwordStore, err := passwords.Open(context.Background(), cfg.DatabasePath, passwords.NetworkPortRange{
+		Min: cfg.NetworkPortMin,
+		Max: cfg.NetworkPortMax,
+	})
 	if err != nil {
 		logger.Error("open password database", "path", cfg.DatabasePath, "error", err)
 		os.Exit(1)
@@ -83,7 +86,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	logger.Info("sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath, "database_path", cfg.DatabasePath)
+	logger.Info("sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath, "database_path", cfg.DatabasePath, "network_port_min", cfg.NetworkPortMin, "network_port_max", cfg.NetworkPortMax)
 
 	select {
 	case sig := <-sigCh:

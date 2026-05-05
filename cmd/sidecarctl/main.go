@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
@@ -27,7 +29,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&address, "address", address, "sidecard gRPC address")
-	root.AddCommand(statusCommand(), passwordCommand(), versionCommand())
+	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), versionCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -75,7 +77,7 @@ func passwordCommand() *cobra.Command {
 		Use:   "password",
 		Short: "Manage sidecar passwords",
 	}
-	cmd.AddCommand(passwordGetCommand())
+	cmd.AddCommand(passwordGetCommand(), passwordReadCommand(), passwordListCommand())
 	return cmd
 }
 
@@ -113,6 +115,129 @@ func passwordGetCommand() *cobra.Command {
 				return fmt.Errorf("password get RPC: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), resp.GetPassword())
+			return nil
+		},
+	}
+}
+
+func passwordReadCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "read <service name> <name>",
+		Short: "Read a stored password without creating it",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).PasswordRead(ctx, &sidecarv1.PasswordReadRequest{
+				ServiceName: args[0],
+				Name:        args[1],
+			})
+			if err != nil {
+				return fmt.Errorf("password read RPC: %w", err)
+			}
+			if !resp.GetIsOk() {
+				return fmt.Errorf("password %q for service %q was not found", args[1], args[0])
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), resp.GetPassword())
+			return nil
+		},
+	}
+}
+
+func passwordListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List stored passwords",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).PasswordList(ctx, &sidecarv1.PasswordListRequest{})
+			if err != nil {
+				return fmt.Errorf("password list RPC: %w", err)
+			}
+			printPasswordList(cmd.OutOrStdout(), resp)
+			return nil
+		},
+	}
+}
+
+func networkCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Manage sidecar network ports",
+	}
+	portCmd := &cobra.Command{
+		Use:   "port",
+		Short: "Manage sidecar network ports",
+	}
+	portCmd.AddCommand(networkPortGetCommand(), networkListCommand())
+	cmd.AddCommand(portCmd, networkListCommand())
+	return cmd
+}
+
+func networkPortGetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <service name> <name>",
+		Short: "Get or allocate an idempotent network port",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).NetworkPortGet(ctx, &sidecarv1.NetworkPortGetRequest{
+				ServiceName: args[0],
+				Name:        args[1],
+			})
+			if err != nil {
+				return fmt.Errorf("network port get RPC: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), resp.GetPort())
+			return nil
+		},
+	}
+}
+
+func networkListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List stored network ports",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).NetworkList(ctx, &sidecarv1.NetworkListRequest{})
+			if err != nil {
+				return fmt.Errorf("network list RPC: %w", err)
+			}
+			printNetworkList(cmd.OutOrStdout(), resp)
 			return nil
 		},
 	}
@@ -168,6 +293,26 @@ func parsePasswordType(value string) (sidecarv1.PasswordType, error) {
 	default:
 		return sidecarv1.PasswordType_PASSWORD_TYPE_UNSPECIFIED, fmt.Errorf("unknown password type %q", value)
 	}
+}
+
+func printPasswordList(out io.Writer, resp *sidecarv1.PasswordListResponse) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE\tNAME\tPASSWORD")
+	for _, service := range resp.GetServices() {
+		for _, password := range service.GetPasswords() {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", service.GetServiceName(), password.GetName(), password.GetPassword())
+		}
+	}
+	_ = w.Flush()
+}
+
+func printNetworkList(out io.Writer, resp *sidecarv1.NetworkListResponse) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE\tNAME\tPORT")
+	for _, network := range resp.GetNetworks() {
+		fmt.Fprintf(w, "%s\t%s\t%d\n", network.GetServiceName(), network.GetName(), network.GetPort())
+	}
+	_ = w.Flush()
 }
 
 func printTable(resp *sidecarv1.ServiceStatusResponse) {

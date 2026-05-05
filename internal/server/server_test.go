@@ -32,6 +32,31 @@ func (fakePasswords) Get(_ context.Context, service, name string, length int32, 
 	return passwords.Record{Value: "secret", IsNew: true}, nil
 }
 
+func (fakePasswords) Read(_ context.Context, service, name string) (string, bool, error) {
+	if name == "missing" {
+		return "", false, nil
+	}
+	return "secret", true, nil
+}
+
+func (fakePasswords) List(_ context.Context) ([]passwords.Entry, error) {
+	return []passwords.Entry{
+		{Service: "svc-a", Name: "admin", Value: "secret-a"},
+		{Service: "svc-b", Name: "admin", Value: "secret-b"},
+	}, nil
+}
+
+func (fakePasswords) NetworkPortGet(_ context.Context, service, name string) (passwords.NetworkEntry, bool, error) {
+	return passwords.NetworkEntry{Service: service, Name: name, Port: 20000}, true, nil
+}
+
+func (fakePasswords) NetworkList(_ context.Context) ([]passwords.NetworkEntry, error) {
+	return []passwords.NetworkEntry{
+		{Service: "svc-a", Name: "http", Port: 20000},
+		{Service: "svc-b", Name: "http", Port: 20001},
+	}, nil
+}
+
 func TestServiceStatusReturnsPerServiceErrors(t *testing.T) {
 	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
 
@@ -83,5 +108,80 @@ func TestPasswordGetReturnsStoredPassword(t *testing.T) {
 	}
 	if resp.GetPassword() != "secret" || !resp.GetIsNew() {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestPasswordReadReturnsStoredPassword(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.PasswordRead(context.Background(), &sidecarv1.PasswordReadRequest{
+		ServiceName: "svc",
+		Name:        "admin",
+	})
+	if err != nil {
+		t.Fatalf("PasswordRead returned error: %v", err)
+	}
+	if resp.GetPassword() != "secret" || !resp.GetIsOk() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestPasswordReadReturnsNotFound(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.PasswordRead(context.Background(), &sidecarv1.PasswordReadRequest{
+		ServiceName: "svc",
+		Name:        "missing",
+	})
+	if err != nil {
+		t.Fatalf("PasswordRead returned error: %v", err)
+	}
+	if resp.GetPassword() != "" || resp.GetIsOk() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestPasswordListReturnsGroupedPasswords(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.PasswordList(context.Background(), &sidecarv1.PasswordListRequest{})
+	if err != nil {
+		t.Fatalf("PasswordList returned error: %v", err)
+	}
+	if len(resp.GetServices()) != 2 {
+		t.Fatalf("got %d services, want 2", len(resp.GetServices()))
+	}
+	if got := resp.GetServices()[0].GetPasswords()[0].GetPassword(); got != "secret-a" {
+		t.Fatalf("first password = %q, want secret-a", got)
+	}
+}
+
+func TestNetworkPortGetReturnsStoredPort(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.NetworkPortGet(context.Background(), &sidecarv1.NetworkPortGetRequest{
+		ServiceName: "svc",
+		Name:        "http",
+	})
+	if err != nil {
+		t.Fatalf("NetworkPortGet returned error: %v", err)
+	}
+	if resp.GetPort() != 20000 || !resp.GetIsNew() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestNetworkListReturnsPorts(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.NetworkList(context.Background(), &sidecarv1.NetworkListRequest{})
+	if err != nil {
+		t.Fatalf("NetworkList returned error: %v", err)
+	}
+	if len(resp.GetNetworks()) != 2 {
+		t.Fatalf("got %d networks, want 2", len(resp.GetNetworks()))
+	}
+	if got := resp.GetNetworks()[0].GetPort(); got != 20000 {
+		t.Fatalf("first network port = %d, want 20000", got)
 	}
 }
