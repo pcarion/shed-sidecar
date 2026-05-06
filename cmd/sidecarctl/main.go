@@ -29,7 +29,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&address, "address", address, "shed-sidecard gRPC address")
-	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), paramCommand(), postgresCommand(), versionCommand())
+	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), paramCommand(), postgresCommand(), confCommand(), versionCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -396,6 +396,105 @@ func pgHbaConfigureCommand() *cobra.Command {
 	return cmd
 }
 
+func confCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "conf",
+		Short: "Manage key/value configuration files",
+	}
+	cmd.AddCommand(confSetCommand(), confGetCommand())
+	return cmd
+}
+
+func confSetCommand() *cobra.Command {
+	valueTypeName := "string"
+	cmd := &cobra.Command{
+		Use:   "set <file path> <space|equal|colon> <key=value> ...",
+		Short: "Set missing keys in a key/value configuration file",
+		Args:  cobra.MinimumNArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			confType, err := parseKeyValueConfType(args[1])
+			if err != nil {
+				return err
+			}
+			valueType, err := parseKeyValueValueType(valueTypeName)
+			if err != nil {
+				return err
+			}
+			entries := make([]*sidecarv1.KeyValueEntry, 0, len(args)-2)
+			for _, arg := range args[2:] {
+				key, value, err := splitKeyValueArg(arg)
+				if err != nil {
+					return err
+				}
+				entries = append(entries, &sidecarv1.KeyValueEntry{
+					Key:   key,
+					Value: value,
+					Type:  &valueType,
+				})
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).ConfigureKeyValueConf(ctx, &sidecarv1.ConfigureKeyValueConfRequest{
+				FilePath: args[0],
+				Type:     confType,
+				Entries:  entries,
+			})
+			if err != nil {
+				return fmt.Errorf("configure key/value conf RPC: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "valid=%t new=%t\n", resp.GetIsValid(), resp.GetIsNew())
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&valueTypeName, "value-type", valueTypeName, "value type: string or number")
+	return cmd
+}
+
+func confGetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <file path> <space|equal|colon> <key>",
+		Short: "Get a key from a key/value configuration file",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			confType, err := parseKeyValueConfType(args[1])
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).ConfigureGetKeyValue(ctx, &sidecarv1.ConfigureGetKeyValueRequest{
+				FilePath: args[0],
+				Type:     confType,
+				Key:      args[2],
+			})
+			if err != nil {
+				return fmt.Errorf("get key/value conf RPC: %w", err)
+			}
+			if !resp.GetIsValid() {
+				return fmt.Errorf("key %q was not found", args[2])
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), resp.GetValue())
+			return nil
+		},
+	}
+}
+
 func versionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -457,6 +556,42 @@ func parsePgHbaType(value string) (sidecarv1.PgHbaType, error) {
 	default:
 		return sidecarv1.PgHbaType_PG_HBA_TYPE_UNSPECIFIED, fmt.Errorf("unknown pg_hba type %q", value)
 	}
+}
+
+func parseKeyValueConfType(value string) (sidecarv1.KeyValueConfType, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "space", "key-value", "key_value", "key_value_conf_type_space":
+		return sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_SPACE, nil
+	case "equal", "equals", "=", "key_value_conf_type_equal":
+		return sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL, nil
+	case "colon", ":", "key_value_conf_type_colon":
+		return sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_COLON, nil
+	default:
+		return sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_UNSPECIFIED, fmt.Errorf("unknown key/value conf type %q", value)
+	}
+}
+
+func parseKeyValueValueType(value string) (sidecarv1.KeyValueValueType, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "string", "str", "key_value_value_type_string":
+		return sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_STRING, nil
+	case "number", "num", "key_value_value_type_number":
+		return sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_NUMBER, nil
+	default:
+		return sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_UNSPECIFIED, fmt.Errorf("unknown key/value value type %q", value)
+	}
+}
+
+func splitKeyValueArg(value string) (string, string, error) {
+	key, val, ok := strings.Cut(value, "=")
+	if !ok {
+		return "", "", fmt.Errorf("invalid key/value argument %q: expected key=value", value)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", "", fmt.Errorf("invalid key/value argument %q: key is empty", value)
+	}
+	return key, val, nil
 }
 
 func splitCSV(value string) []string {

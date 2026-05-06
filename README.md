@@ -203,6 +203,21 @@ Configure a pg_hba rule through the daemon:
 shed-sidecar postgres pg-hba configure /etc/postgresql/16/main/pg_hba.conf host all app scram-sha-256 --client-address 10.0.0.0/24
 ```
 
+### Key/Value Config Files
+
+Set one or more missing keys in a configuration file:
+
+```sh
+shed-sidecar conf set /etc/example/app.conf equal port=5432 --value-type number
+shed-sidecar conf set /etc/example/app.conf colon listen_address=127.0.0.1
+```
+
+Read a key from a configuration file:
+
+```sh
+shed-sidecar conf get /etc/example/app.conf equal port
+```
+
 ### Version
 
 Print the build version:
@@ -301,6 +316,33 @@ shed-sidecar postgres pg-hba configure <file path> <local|host> <database> <user
 ```
 
 Pass multiple users as a comma-separated value such as `app,migrator`.
+
+## Key/Value Config Files
+
+`shed-sidecard` implements `ConfigureKeyValueConf` and `ConfigureGetKeyValue` from `shed-proto`.
+
+Supported formats are:
+
+- `space`: `key value`
+- `equal`: `key = value`
+- `colon`: `key : value`
+
+For `equal` and `colon`, existing active lines may use spacing variations such as `key=value`, `key = value`, `key:value`, or `key : value`. Lines whose first non-whitespace character is `#` are comments and are ignored when checking whether a key is already active.
+
+`ConfigureKeyValueConf` checks each requested key before writing. If the key is already set on an active line, that key is left unchanged. If the key is missing and there is a nearby descriptive comment like `# key ...`, the daemon inserts the new `key value` line immediately after that comment. Otherwise, it appends the new line to the bottom of the file.
+
+If any key is added, the daemon creates an archive directory beside `config.toml`, writes a backup named `yyyy_mm_dd_hh_mm_ss_<file name>`, writes the updated file, and returns `is_valid=true` and `is_new=true`. If no key is added, it returns `is_valid=true` and `is_new=false`.
+
+Values with type `number` are written without quotes. Values with type `string` are escaped and written as quoted strings.
+
+The CLI forms are:
+
+```sh
+shed-sidecar conf set <file path> <space|equal|colon> <key=value> ... [--value-type <string|number>]
+shed-sidecar conf get <file path> <space|equal|colon> <key>
+```
+
+If `file_path` is relative, it is resolved relative to the directory containing `config.toml`.
 
 ## Install From A Release
 

@@ -319,6 +319,79 @@ func TestConfigurePgHbaConfAppendsRule(t *testing.T) {
 	}
 }
 
+func TestConfigureKeyValueConfAppendsRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.conf")
+	if err := os.WriteFile(path, []byte("# port controls listener\n"), 0o600); err != nil {
+		t.Fatalf("write conf: %v", err)
+	}
+	valueType := sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_NUMBER
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, dir)
+
+	resp, err := srv.ConfigureKeyValueConf(context.Background(), &sidecarv1.ConfigureKeyValueConfRequest{
+		FilePath: path,
+		Type:     sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL,
+		Entries: []*sidecarv1.KeyValueEntry{
+			{Key: "port", Value: "5432", Type: &valueType},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigureKeyValueConf returned error: %v", err)
+	}
+	if !resp.GetIsValid() || !resp.GetIsNew() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read conf: %v", err)
+	}
+	if !strings.Contains(string(data), "port = 5432\n") {
+		t.Fatalf("conf missing key:\n%s", data)
+	}
+}
+
+func TestConfigureGetKeyValueReturnsValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.conf")
+	if err := os.WriteFile(path, []byte("name = \"db\"\n"), 0o600); err != nil {
+		t.Fatalf("write conf: %v", err)
+	}
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, dir)
+
+	resp, err := srv.ConfigureGetKeyValue(context.Background(), &sidecarv1.ConfigureGetKeyValueRequest{
+		FilePath: path,
+		Type:     sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL,
+		Key:      "name",
+	})
+	if err != nil {
+		t.Fatalf("ConfigureGetKeyValue returned error: %v", err)
+	}
+	if !resp.GetIsValid() || resp.GetValue() != "db" || resp.GetType() != sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_STRING {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestConfigureGetKeyValueReturnsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.conf")
+	if err := os.WriteFile(path, []byte("# name = \"db\"\n"), 0o600); err != nil {
+		t.Fatalf("write conf: %v", err)
+	}
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, dir)
+
+	resp, err := srv.ConfigureGetKeyValue(context.Background(), &sidecarv1.ConfigureGetKeyValueRequest{
+		FilePath: path,
+		Type:     sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL,
+		Key:      "name",
+	})
+	if err != nil {
+		t.Fatalf("ConfigureGetKeyValue returned error: %v", err)
+	}
+	if resp.GetIsValid() || resp.Value != nil || resp.Type != nil {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
 func ptr(value string) *string {
 	return &value
 }

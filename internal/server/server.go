@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
+	"github.com/pcarion/shed-sidecar/internal/keyvalue"
 	"github.com/pcarion/shed-sidecar/internal/passwords"
 	"github.com/pcarion/shed-sidecar/internal/pghba"
 	"github.com/pcarion/shed-sidecar/internal/systemd"
@@ -232,6 +233,32 @@ func (s *Server) ConfigurePgHbaConf(ctx context.Context, req *sidecarv1.Configur
 		IsValid: true,
 		IsNew:   isNew,
 	}, nil
+}
+
+func (s *Server) ConfigureKeyValueConf(ctx context.Context, req *sidecarv1.ConfigureKeyValueConfRequest) (*sidecarv1.ConfigureKeyValueConfResponse, error) {
+	isNew, err := keyvalue.Configure(req, s.configDir)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.ConfigureKeyValueConfResponse{
+		IsValid: true,
+		IsNew:   isNew,
+	}, nil
+}
+
+func (s *Server) ConfigureGetKeyValue(ctx context.Context, req *sidecarv1.ConfigureGetKeyValueRequest) (*sidecarv1.ConfigureGetKeyValueResponse, error) {
+	result, err := keyvalue.Get(req, s.configDir)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	resp := &sidecarv1.ConfigureGetKeyValueResponse{
+		IsValid: result.Found,
+	}
+	if result.Found {
+		resp.Value = &result.Value
+		resp.Type = &result.Type
+	}
+	return resp, nil
 }
 
 func protoStatus(status systemd.Status, includeRaw bool) *sidecarv1.ServiceStatus {

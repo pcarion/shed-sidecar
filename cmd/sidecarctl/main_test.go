@@ -59,6 +59,59 @@ func TestParsePgHbaTypeRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestParseKeyValueConfType(t *testing.T) {
+	tests := map[string]sidecarv1.KeyValueConfType{
+		"space": sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_SPACE,
+		"equal": sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL,
+		"=":     sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_EQUAL,
+		"colon": sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_COLON,
+		":":     sidecarv1.KeyValueConfType_KEY_VALUE_CONF_TYPE_COLON,
+	}
+
+	for input, want := range tests {
+		got, err := parseKeyValueConfType(input)
+		if err != nil {
+			t.Fatalf("parseKeyValueConfType(%q) returned error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("parseKeyValueConfType(%q) = %s, want %s", input, got, want)
+		}
+	}
+}
+
+func TestParseKeyValueValueType(t *testing.T) {
+	tests := map[string]sidecarv1.KeyValueValueType{
+		"string": sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_STRING,
+		"number": sidecarv1.KeyValueValueType_KEY_VALUE_VALUE_TYPE_NUMBER,
+	}
+
+	for input, want := range tests {
+		got, err := parseKeyValueValueType(input)
+		if err != nil {
+			t.Fatalf("parseKeyValueValueType(%q) returned error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("parseKeyValueValueType(%q) = %s, want %s", input, got, want)
+		}
+	}
+}
+
+func TestSplitKeyValueArg(t *testing.T) {
+	key, value, err := splitKeyValueArg("name=db=main")
+	if err != nil {
+		t.Fatalf("splitKeyValueArg returned error: %v", err)
+	}
+	if key != "name" || value != "db=main" {
+		t.Fatalf("splitKeyValueArg = %q, %q; want name, db=main", key, value)
+	}
+}
+
+func TestSplitKeyValueArgRejectsInvalid(t *testing.T) {
+	if _, _, err := splitKeyValueArg("missing"); err == nil {
+		t.Fatal("splitKeyValueArg returned nil error for missing separator")
+	}
+}
+
 func TestSplitCSV(t *testing.T) {
 	got := splitCSV("app, migrator,, readonly ")
 	want := []string{"app", "migrator", "readonly"}
