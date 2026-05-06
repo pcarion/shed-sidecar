@@ -11,15 +11,15 @@ all: build
 help: ## Show this help.
 	@awk 'BEGIN { FS = ":.*##"; printf "Usage:\n  make <target>\n\nTargets:\n" } /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-build: $(BIN_DIR)/sidecard $(BIN_DIR)/sidecarctl ## Build sidecard and sidecarctl into bin/.
+build: $(BIN_DIR)/shed-sidecard $(BIN_DIR)/shed-sidecar ## Build shed-sidecard and shed-sidecar into bin/.
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-$(BIN_DIR)/sidecard: $(shell find cmd/sidecard internal -type f -name '*.go') go.mod go.sum | $(BIN_DIR)
+$(BIN_DIR)/shed-sidecard: $(shell find cmd/sidecard internal -type f -name '*.go') go.mod go.sum | $(BIN_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/sidecard
 
-$(BIN_DIR)/sidecarctl: $(shell find cmd/sidecarctl internal -type f -name '*.go') go.mod go.sum | $(BIN_DIR)
+$(BIN_DIR)/shed-sidecar: $(shell find cmd/sidecarctl internal -type f -name '*.go') go.mod go.sum | $(BIN_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/sidecarctl
 
 test: ## Run all Go tests.

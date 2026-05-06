@@ -7,9 +7,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: sidecard
+  - id: shed-sidecard
     main: ./cmd/sidecard
-    binary: sidecard
+    binary: shed-sidecard
     env:
       - CGO_ENABLED=0
     goos:
@@ -20,9 +20,9 @@ builds:
     ldflags:
       - -s -w
 
-  - id: sidecarctl
+  - id: shed-sidecar
     main: ./cmd/sidecarctl
-    binary: sidecarctl
+    binary: shed-sidecar
     env:
       - CGO_ENABLED=0
     goos:
@@ -36,8 +36,8 @@ builds:
 archives:
   - id: binaries
     ids:
-      - sidecard
-      - sidecarctl
+      - shed-sidecard
+      - shed-sidecar
     files:
       - install.sh
       - README.md

@@ -56,6 +56,12 @@ type NetworkEntry struct {
 	Port    int32
 }
 
+type ParamEntry struct {
+	Service string
+	Name    string
+	Value   string
+}
+
 func Open(ctx context.Context, path string, ranges ...NetworkPortRange) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("database path is empty")
@@ -273,6 +279,79 @@ ORDER BY service ASC, name ASC`)
 	return entries, nil
 }
 
+func (s *Store) ParamSet(ctx context.Context, service, name, value string) error {
+	if strings.TrimSpace(service) == "" {
+		return errors.New("service name is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("param name is required")
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO params (service, name, value, generationDate)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(service, name) DO UPDATE SET
+	value = excluded.value,
+	generationDate = excluded.generationDate`,
+		service,
+		name,
+		value,
+		time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		return fmt.Errorf("set param: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ParamGet(ctx context.Context, service, name string) (string, bool, error) {
+	if strings.TrimSpace(service) == "" {
+		return "", false, errors.New("service name is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", false, errors.New("param name is required")
+	}
+
+	var value string
+	err := s.db.QueryRowContext(ctx, `
+SELECT value
+FROM params
+WHERE service = ? AND name = ?`,
+		service,
+		name,
+	).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get param: %w", err)
+	}
+	return value, true, nil
+}
+
+func (s *Store) ParamList(ctx context.Context) ([]ParamEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT service, name, value
+FROM params
+ORDER BY service ASC, name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list params: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []ParamEntry
+	for rows.Next() {
+		var entry ParamEntry
+		if err := rows.Scan(&entry.Service, &entry.Name, &entry.Value); err != nil {
+			return nil, fmt.Errorf("scan param: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate params: %w", err)
+	}
+	return entries, nil
+}
+
 func (s *Store) init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS passwords (
@@ -296,6 +375,16 @@ CREATE TABLE IF NOT EXISTS network_ports (
 	UNIQUE (port)
 )`); err != nil {
 		return fmt.Errorf("create network_ports table: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS params (
+	service TEXT NOT NULL,
+	name TEXT NOT NULL,
+	value TEXT NOT NULL,
+	generationDate TEXT NOT NULL,
+	UNIQUE (service, name)
+)`); err != nil {
+		return fmt.Errorf("create params table: %w", err)
 	}
 	return nil
 }

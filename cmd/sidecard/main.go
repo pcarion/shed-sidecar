@@ -50,7 +50,7 @@ func main() {
 	defer passwordStore.Close()
 
 	grpcServer := grpc.NewServer()
-	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), passwordStore, logger, cfg.AllowedServices))
+	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), passwordStore, logger, cfg.AllowedServices, cfg.ConfigDir))
 
 	tcpAddress := cfg.TCPAddress()
 	tcpListener, err := net.Listen("tcp", tcpAddress)
@@ -86,7 +86,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	logger.Info("sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath, "database_path", cfg.DatabasePath, "network_port_min", cfg.NetworkPortMin, "network_port_max", cfg.NetworkPortMax)
+	logger.Info("shed-sidecard started", "tcp_address", tcpAddress, "socket_path", cfg.SocketPath, "database_path", cfg.DatabasePath, "network_port_min", cfg.NetworkPortMin, "network_port_max", cfg.NetworkPortMax)
 
 	select {
 	case sig := <-sigCh:

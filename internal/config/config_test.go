@@ -39,6 +39,9 @@ func TestLoadResolvesRelativeDatabasePathAgainstConfigFile(t *testing.T) {
 	if cfg.DatabasePath != want {
 		t.Fatalf("DatabasePath = %q, want %q", cfg.DatabasePath, want)
 	}
+	if cfg.ConfigDir != dir {
+		t.Fatalf("ConfigDir = %q, want %q", cfg.ConfigDir, dir)
+	}
 }
 
 func TestLoadResolvesDefaultDatabasePathWhenConfigIsMissing(t *testing.T) {

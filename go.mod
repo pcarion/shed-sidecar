@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/godbus/dbus/v5 v5.1.0
-	github.com/pcarion/shed-proto v0.3.2
+	github.com/pcarion/shed-proto v0.3.5
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.9.1
 	google.golang.org/grpc v1.71.0

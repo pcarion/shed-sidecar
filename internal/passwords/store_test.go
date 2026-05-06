@@ -247,6 +247,56 @@ func TestStoreNetworkPortGetReturnsErrorWhenRangeExhausted(t *testing.T) {
 	}
 }
 
+func TestStoreParamSetGetAndList(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	if err := store.ParamSet(context.Background(), "zsvc", "api-url", "https://z.example"); err != nil {
+		t.Fatalf("ParamSet zsvc returned error: %v", err)
+	}
+	if err := store.ParamSet(context.Background(), "asvc", "api-url", "https://a.example"); err != nil {
+		t.Fatalf("ParamSet asvc returned error: %v", err)
+	}
+	if err := store.ParamSet(context.Background(), "zsvc", "api-url", "https://z2.example"); err != nil {
+		t.Fatalf("ParamSet update returned error: %v", err)
+	}
+
+	value, ok, err := store.ParamGet(context.Background(), "zsvc", "api-url")
+	if err != nil {
+		t.Fatalf("ParamGet returned error: %v", err)
+	}
+	if !ok || value != "https://z2.example" {
+		t.Fatalf("ParamGet = %q, %v; want updated value true", value, ok)
+	}
+
+	entries, err := store.ParamList(context.Background())
+	if err != nil {
+		t.Fatalf("ParamList returned error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	if entries[0].Service != "asvc" || entries[0].Value != "https://a.example" {
+		t.Fatalf("unexpected first entry: %+v", entries[0])
+	}
+	if entries[1].Service != "zsvc" || entries[1].Value != "https://z2.example" {
+		t.Fatalf("unexpected second entry: %+v", entries[1])
+	}
+}
+
+func TestStoreParamGetReturnsNotFound(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	value, ok, err := store.ParamGet(context.Background(), "svc", "missing")
+	if err != nil {
+		t.Fatalf("ParamGet returned error: %v", err)
+	}
+	if ok || value != "" {
+		t.Fatalf("ParamGet = %q, %v; want empty false", value, ok)
+	}
+}
+
 func TestStoreCreatesExpectedColumns(t *testing.T) {
 	store := openTestStore(t)
 	defer store.Close()
@@ -301,6 +351,35 @@ func TestStoreCreatesNetworkPortsTable(t *testing.T) {
 	for _, name := range []string{"service", "name", "port", "generationDate"} {
 		if !got[name] {
 			t.Fatalf("missing column %q in network_ports table", name)
+		}
+	}
+}
+
+func TestStoreCreatesParamsTable(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	rows, err := store.db.QueryContext(context.Background(), `PRAGMA table_info(params)`)
+	if err != nil {
+		t.Fatalf("table_info returned error: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		got[name] = true
+	}
+	for _, name := range []string{"service", "name", "value", "generationDate"} {
+		if !got[name] {
+			t.Fatalf("missing column %q in params table", name)
 		}
 	}
 }

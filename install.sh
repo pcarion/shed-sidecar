@@ -12,11 +12,11 @@ if [ "$#" -ne 1 ]; then
 fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-SIDECARD_BIN="$SCRIPT_DIR/sidecard"
-SIDECARCTL_BIN="$SCRIPT_DIR/sidecarctl"
+SIDECARD_BIN="$SCRIPT_DIR/shed-sidecard"
+SIDECARCTL_BIN="$SCRIPT_DIR/shed-sidecar"
 
 if [ ! -f "$SIDECARD_BIN" ]; then
-  echo "sidecard binary not found next to install.sh: $SIDECARD_BIN" >&2
+  echo "shed-sidecard binary not found next to install.sh: $SIDECARD_BIN" >&2
   exit 1
 fi
 
@@ -53,9 +53,9 @@ if systemctl list-unit-files sidecar.service >/dev/null 2>&1; then
   systemctl stop sidecar.service
 fi
 
-install -m 0755 "$SIDECARD_BIN" /usr/local/bin/sidecard
+install -m 0755 "$SIDECARD_BIN" /usr/local/bin/shed-sidecard
 if [ -f "$SIDECARCTL_BIN" ]; then
-  install -m 0755 "$SIDECARCTL_BIN" /usr/local/bin/sidecarctl
+  install -m 0755 "$SIDECARCTL_BIN" /usr/local/bin/shed-sidecar
 fi
 
 install -d -m 0770 -o root -g sidecar "$PERSISTENT_DIR"
@@ -78,7 +78,7 @@ Description=Sidecar VM Management Service
 After=network.target dbus.socket
 
 [Service]
-ExecStart=/usr/local/bin/sidecard --config $CONFIG_FILE
+ExecStart=/usr/local/bin/shed-sidecard --config $CONFIG_FILE
 Restart=on-failure
 User=sidecar
 Group=sidecar

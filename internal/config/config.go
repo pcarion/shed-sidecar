@@ -19,6 +19,7 @@ type Config struct {
 	NetworkPortMin  int      `toml:"network_port_min"`
 	NetworkPortMax  int      `toml:"network_port_max"`
 	AllowedServices []string `toml:"allowed_services"`
+	ConfigDir       string   `toml:"-"`
 }
 
 func Default() Config {
@@ -69,8 +70,9 @@ func Load(path string) (Config, error) {
 }
 
 func finalize(path string, cfg Config) Config {
+	cfg.ConfigDir = filepath.Dir(path)
 	if !filepath.IsAbs(cfg.DatabasePath) {
-		cfg.DatabasePath = filepath.Join(filepath.Dir(path), cfg.DatabasePath)
+		cfg.DatabasePath = filepath.Join(cfg.ConfigDir, cfg.DatabasePath)
 	}
 	return cfg
 }

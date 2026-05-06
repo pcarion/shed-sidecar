@@ -23,13 +23,13 @@ var (
 
 func main() {
 	root := &cobra.Command{
-		Use:           "sidecarctl",
+		Use:           "shed-sidecar",
 		Short:         "Interact with the shed sidecar daemon",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVar(&address, "address", address, "sidecard gRPC address")
-	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), versionCommand())
+	root.PersistentFlags().StringVar(&address, "address", address, "shed-sidecard gRPC address")
+	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), paramCommand(), postgresCommand(), versionCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -243,6 +243,159 @@ func networkListCommand() *cobra.Command {
 	}
 }
 
+func paramCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "param",
+		Short: "Manage sidecar parameters",
+	}
+	cmd.AddCommand(paramSetCommand(), paramGetCommand(), paramListCommand())
+	return cmd
+}
+
+func paramSetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <service name> <name> <value>",
+		Short: "Set a stored parameter",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			_, err = sidecarv1.NewSidecarClient(conn).ParamSet(ctx, &sidecarv1.ParamSetRequest{
+				ServiceName: args[0],
+				Name:        args[1],
+				Value:       args[2],
+			})
+			if err != nil {
+				return fmt.Errorf("param set RPC: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
+func paramGetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <service name> <name>",
+		Short: "Get a stored parameter",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).ParamGet(ctx, &sidecarv1.ParamGetRequest{
+				ServiceName: args[0],
+				Name:        args[1],
+			})
+			if err != nil {
+				return fmt.Errorf("param get RPC: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), resp.GetValue())
+			return nil
+		},
+	}
+}
+
+func paramListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List stored parameters",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).ParamList(ctx, &sidecarv1.ParamListRequest{})
+			if err != nil {
+				return fmt.Errorf("param list RPC: %w", err)
+			}
+			printParamList(cmd.OutOrStdout(), resp)
+			return nil
+		},
+	}
+}
+
+func postgresCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "postgres",
+		Short: "Manage PostgreSQL configuration",
+	}
+	pgHbaCmd := &cobra.Command{
+		Use:   "pg-hba",
+		Short: "Manage PostgreSQL pg_hba.conf rules",
+	}
+	pgHbaCmd.AddCommand(pgHbaConfigureCommand())
+	cmd.AddCommand(pgHbaCmd)
+	return cmd
+}
+
+func pgHbaConfigureCommand() *cobra.Command {
+	var clientAddress string
+	var options string
+	cmd := &cobra.Command{
+		Use:   "configure <file path> <type> <database> <users> <method>",
+		Short: "Configure a pg_hba.conf rule",
+		Args:  cobra.ExactArgs(5),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hbaType, err := parsePgHbaType(args[1])
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			req := &sidecarv1.ConfigurePgHbaConfRequest{
+				FilePath: args[0],
+				Type:     hbaType,
+				Database: args[2],
+				Users:    splitCSV(args[3]),
+				Method:   args[4],
+			}
+			if clientAddress != "" {
+				req.Address = &clientAddress
+			}
+			if options != "" {
+				req.Options = &options
+			}
+
+			resp, err := sidecarv1.NewSidecarClient(conn).ConfigurePgHbaConf(ctx, req)
+			if err != nil {
+				return fmt.Errorf("configure pg_hba.conf RPC: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "valid=%t new=%t\n", resp.GetIsValid(), resp.GetIsNew())
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&clientAddress, "client-address", "", "pg_hba address column for host rules")
+	cmd.Flags().StringVar(&options, "options", "", "pg_hba options columns")
+	return cmd
+}
+
 func versionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -295,6 +448,28 @@ func parsePasswordType(value string) (sidecarv1.PasswordType, error) {
 	}
 }
 
+func parsePgHbaType(value string) (sidecarv1.PgHbaType, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "local", "pg_hba_type_local":
+		return sidecarv1.PgHbaType_PG_HBA_TYPE_LOCAL, nil
+	case "host", "pg_hba_type_host":
+		return sidecarv1.PgHbaType_PG_HBA_TYPE_HOST, nil
+	default:
+		return sidecarv1.PgHbaType_PG_HBA_TYPE_UNSPECIFIED, fmt.Errorf("unknown pg_hba type %q", value)
+	}
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func printPasswordList(out io.Writer, resp *sidecarv1.PasswordListResponse) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE\tNAME\tPASSWORD")
@@ -311,6 +486,17 @@ func printNetworkList(out io.Writer, resp *sidecarv1.NetworkListResponse) {
 	fmt.Fprintln(w, "SERVICE\tNAME\tPORT")
 	for _, network := range resp.GetNetworks() {
 		fmt.Fprintf(w, "%s\t%s\t%d\n", network.GetServiceName(), network.GetName(), network.GetPort())
+	}
+	_ = w.Flush()
+}
+
+func printParamList(out io.Writer, resp *sidecarv1.ParamListResponse) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE\tNAME\tVALUE")
+	for _, service := range resp.GetServices() {
+		for _, param := range service.GetParams() {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", service.GetServiceName(), param.GetName(), param.GetValue())
+		}
 	}
 	_ = w.Flush()
 }

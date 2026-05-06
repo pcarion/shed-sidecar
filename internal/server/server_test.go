@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
@@ -54,6 +57,24 @@ func (fakePasswords) NetworkList(_ context.Context) ([]passwords.NetworkEntry, e
 	return []passwords.NetworkEntry{
 		{Service: "svc-a", Name: "http", Port: 20000},
 		{Service: "svc-b", Name: "http", Port: 20001},
+	}, nil
+}
+
+func (fakePasswords) ParamSet(_ context.Context, service, name, value string) error {
+	return nil
+}
+
+func (fakePasswords) ParamGet(_ context.Context, service, name string) (string, bool, error) {
+	if name == "missing" {
+		return "", false, nil
+	}
+	return "value", true, nil
+}
+
+func (fakePasswords) ParamList(_ context.Context) ([]passwords.ParamEntry, error) {
+	return []passwords.ParamEntry{
+		{Service: "svc-a", Name: "api-url", Value: "https://a.example"},
+		{Service: "svc-b", Name: "api-url", Value: "https://b.example"},
 	}, nil
 }
 
@@ -184,4 +205,120 @@ func TestNetworkListReturnsPorts(t *testing.T) {
 	if got := resp.GetNetworks()[0].GetPort(); got != 20000 {
 		t.Fatalf("first network port = %d, want 20000", got)
 	}
+}
+
+func TestParamSetReturnsOK(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	if _, err := srv.ParamSet(context.Background(), &sidecarv1.ParamSetRequest{
+		ServiceName: "svc",
+		Name:        "api-url",
+		Value:       "https://example.test",
+	}); err != nil {
+		t.Fatalf("ParamSet returned error: %v", err)
+	}
+}
+
+func TestParamGetReturnsStoredValue(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.ParamGet(context.Background(), &sidecarv1.ParamGetRequest{
+		ServiceName: "svc",
+		Name:        "api-url",
+	})
+	if err != nil {
+		t.Fatalf("ParamGet returned error: %v", err)
+	}
+	if resp.GetValue() != "value" {
+		t.Fatalf("ParamGet value = %q, want value", resp.GetValue())
+	}
+}
+
+func TestParamGetReturnsNotFound(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	if _, err := srv.ParamGet(context.Background(), &sidecarv1.ParamGetRequest{
+		ServiceName: "svc",
+		Name:        "missing",
+	}); err == nil {
+		t.Fatal("ParamGet returned nil error for missing param")
+	}
+}
+
+func TestParamListReturnsGroupedParams(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	resp, err := srv.ParamList(context.Background(), &sidecarv1.ParamListRequest{})
+	if err != nil {
+		t.Fatalf("ParamList returned error: %v", err)
+	}
+	if len(resp.GetServices()) != 2 {
+		t.Fatalf("got %d services, want 2", len(resp.GetServices()))
+	}
+	if got := resp.GetServices()[0].GetParams()[0].GetValue(); got != "https://a.example" {
+		t.Fatalf("first param = %q, want https://a.example", got)
+	}
+}
+
+func TestConfigurePgHbaConfReturnsExistingRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pg_hba.conf")
+	if err := os.WriteFile(path, []byte("host all app 10.0.0.0/24 scram-sha-256\n"), 0o600); err != nil {
+		t.Fatalf("write pg_hba.conf: %v", err)
+	}
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, dir)
+
+	resp, err := srv.ConfigurePgHbaConf(context.Background(), &sidecarv1.ConfigurePgHbaConfRequest{
+		FilePath: path,
+		Type:     sidecarv1.PgHbaType_PG_HBA_TYPE_HOST,
+		Database: "all",
+		Users:    []string{"app"},
+		Address:  ptr("10.0.0.0/24"),
+		Method:   "scram-sha-256",
+	})
+	if err != nil {
+		t.Fatalf("ConfigurePgHbaConf returned error: %v", err)
+	}
+	if !resp.GetIsValid() || resp.GetIsNew() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestConfigurePgHbaConfAppendsRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pg_hba.conf")
+	if err := os.WriteFile(path, []byte("local all postgres peer\n"), 0o600); err != nil {
+		t.Fatalf("write pg_hba.conf: %v", err)
+	}
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, dir)
+
+	resp, err := srv.ConfigurePgHbaConf(context.Background(), &sidecarv1.ConfigurePgHbaConfRequest{
+		FilePath: path,
+		Type:     sidecarv1.PgHbaType_PG_HBA_TYPE_HOST,
+		Database: "all",
+		Users:    []string{"app"},
+		Address:  ptr("10.0.0.0/24"),
+		Method:   "scram-sha-256",
+	})
+	if err != nil {
+		t.Fatalf("ConfigurePgHbaConf returned error: %v", err)
+	}
+	if !resp.GetIsValid() || !resp.GetIsNew() {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pg_hba.conf: %v", err)
+	}
+	if !strings.Contains(string(data), "host\tall\tapp\t10.0.0.0/24\tscram-sha-256\n") {
+		t.Fatalf("pg_hba.conf missing appended rule:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "archive")); err != nil {
+		t.Fatalf("archive directory was not created: %v", err)
+	}
+}
+
+func ptr(value string) *string {
+	return &value
 }

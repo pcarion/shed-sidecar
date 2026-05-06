@@ -4,8 +4,8 @@
 
 It builds two binaries:
 
-- `sidecard`: a daemon intended to run under systemd on Ubuntu VMs. It exposes the `sidecar.v1.Sidecar` gRPC service from `github.com/pcarion/shed-proto` on `127.0.0.1:50051` and `/run/sidecar/sidecar.sock`.
-- `sidecarctl`: a Cobra CLI for querying a local `sidecard`.
+- `shed-sidecard`: a daemon intended to run under systemd on Ubuntu VMs. It exposes the `sidecar.v1.Sidecar` gRPC service from `github.com/pcarion/shed-proto` on `127.0.0.1:50051` and `/run/sidecar/sidecar.sock`.
+- `shed-sidecar`: a Cobra CLI for querying a local `shed-sidecard`.
 
 ## Build
 
@@ -61,13 +61,13 @@ Use a personal access token only if releasing to a different repository or organ
 
 ## Configuration
 
-`sidecard` reads `/etc/sidecar/config.toml` by default. The installer writes `config.toml` to the persistent directory you provide and installs the systemd unit with `--config` pointing at that file.
+`shed-sidecard` reads `/etc/sidecar/config.toml` by default. The installer writes `config.toml` to the persistent directory you provide and installs the systemd unit with `--config` pointing at that file.
 
 Complete `config.toml` format:
 
 ```toml
 # TCP port for the localhost gRPC listener.
-# sidecard always binds to 127.0.0.1.
+# shed-sidecard always binds to 127.0.0.1.
 port = 50051
 
 # Unix socket path for same-VM clients.
@@ -113,10 +113,10 @@ Fields:
 
 ## CLI
 
-`sidecarctl` talks to the local `sidecard` gRPC listener. By default it connects to `127.0.0.1:50051`; use `--address` to point it at a different local endpoint:
+`shed-sidecar` talks to the local `shed-sidecard` gRPC listener. By default it connects to `127.0.0.1:50051`; use `--address` to point it at a different local endpoint:
 
 ```sh
-sidecarctl --address 127.0.0.1:50051 <command>
+shed-sidecar --address 127.0.0.1:50051 <command>
 ```
 
 ### Service Status
@@ -124,19 +124,19 @@ sidecarctl --address 127.0.0.1:50051 <command>
 Query one or more systemd units:
 
 ```sh
-sidecarctl status nginx.service ssh.service
+shed-sidecar status nginx.service ssh.service
 ```
 
 Bare service names are accepted by the daemon and treated as `.service` units:
 
 ```sh
-sidecarctl status nginx
+shed-sidecar status nginx
 ```
 
 The normal output is a compact table with a state symbol, service name, active state, sub state, and description. Use `--verbose` to request and print raw `systemctl status` output:
 
 ```sh
-sidecarctl status --verbose nginx.service
+shed-sidecar status --verbose nginx.service
 ```
 
 ### Passwords
@@ -144,19 +144,19 @@ sidecarctl status --verbose nginx.service
 Create or return an idempotent password:
 
 ```sh
-sidecarctl password get zitadel admin 32 hex-lower
+shed-sidecar password get zitadel admin 32 hex-lower
 ```
 
 Read an existing password without creating it:
 
 ```sh
-sidecarctl password read zitadel admin
+shed-sidecar password read zitadel admin
 ```
 
 List stored passwords:
 
 ```sh
-sidecarctl password list
+shed-sidecar password list
 ```
 
 ### Network Ports
@@ -164,28 +164,56 @@ sidecarctl password list
 Allocate or return an idempotent network port:
 
 ```sh
-sidecarctl network port get zitadel http
+shed-sidecar network port get zitadel http
 ```
 
 List stored network port allocations:
 
 ```sh
-sidecarctl network port list
+shed-sidecar network port list
 ```
 
-`sidecarctl network list` is also accepted as a shorthand.
+`shed-sidecar network list` is also accepted as a shorthand.
+
+### Params
+
+Set a service parameter:
+
+```sh
+shed-sidecar param set zitadel issuer https://zitadel.example.com
+```
+
+Read a stored parameter:
+
+```sh
+shed-sidecar param get zitadel issuer
+```
+
+List stored parameters:
+
+```sh
+shed-sidecar param list
+```
+
+### PostgreSQL pg_hba.conf
+
+Configure a pg_hba rule through the daemon:
+
+```sh
+shed-sidecar postgres pg-hba configure /etc/postgresql/16/main/pg_hba.conf host all app scram-sha-256 --client-address 10.0.0.0/24
+```
 
 ### Version
 
 Print the build version:
 
 ```sh
-sidecarctl version
+shed-sidecar version
 ```
 
 ## Passwords
 
-`sidecard` creates a SQLite database at `database_path` and initializes a `passwords` table with these columns:
+`shed-sidecard` creates a SQLite database at `database_path` and initializes a `passwords` table with these columns:
 
 - `service`
 - `name`
@@ -199,9 +227,9 @@ The `PasswordGet` RPC returns an existing password when `service_name`, `name`, 
 The CLI forms are:
 
 ```sh
-sidecarctl password get <service name> <name> <length> <type>
-sidecarctl password read <service name> <name>
-sidecarctl password list
+shed-sidecar password get <service name> <name> <length> <type>
+shed-sidecar password read <service name> <name>
+shed-sidecar password list
 ```
 
 Supported password types are `lowercase`, `uppercase`, `digit`, `symbol`, `hex-lower`, `hex-upper`, and `uuid-v7`. Short aliases are also accepted: `a`, `A`, `1`, `@`, `h`, `H`, and `u7`.
@@ -218,7 +246,7 @@ Password generation policies:
 
 ## Network Ports
 
-`sidecard` also initializes a `network_ports` table with these columns:
+`shed-sidecard` also initializes a `network_ports` table with these columns:
 
 - `service`
 - `name`
@@ -230,9 +258,49 @@ Password generation policies:
 The CLI forms are:
 
 ```sh
-sidecarctl network port get <service name> <name>
-sidecarctl network port list
+shed-sidecar network port get <service name> <name>
+shed-sidecar network port list
 ```
+
+## Params
+
+`shed-sidecard` also initializes a `params` table with these columns:
+
+- `service`
+- `name`
+- `value`
+- `generationDate`
+
+`ParamSet` stores or updates a parameter value for a `(service_name, name)` pair. `ParamGet` returns the stored value, and `ParamList` returns all stored parameters grouped by service name.
+
+The CLI forms are:
+
+```sh
+shed-sidecar param set <service name> <name> <value>
+shed-sidecar param get <service name> <name>
+shed-sidecar param list
+```
+
+## PostgreSQL pg_hba.conf
+
+`shed-sidecard` implements `ConfigurePgHbaConf` from `shed-proto`. The request maps to a pg_hba rule using the PostgreSQL column order:
+
+- `local`: `type database users method options`
+- `host`: `type database users address method options`
+
+The daemon does not validate the semantic content of the pg_hba parameters. It builds the rule columns from the request, reads the existing file, strips comments, and checks whether a matching row already exists. Existing rows return `is_valid=true` and `is_new=false`.
+
+When the row is missing, the daemon creates an archive directory beside `config.toml`, writes a backup named `yyyy_mm_dd_hh_mm_ss_<file name>`, appends the new rule to the bottom of the requested file, and returns `is_valid=true` and `is_new=true`.
+
+If `file_path` is relative, it is resolved relative to the directory containing `config.toml`.
+
+The CLI form is:
+
+```sh
+shed-sidecar postgres pg-hba configure <file path> <local|host> <database> <users> <method> [--client-address <address>] [--options <options>]
+```
+
+Pass multiple users as a comma-separated value such as `app,migrator`.
 
 ## Install From A Release
 
@@ -244,4 +312,4 @@ cd shed-sidecar_<version>_linux_<arch>
 sudo ./install.sh /opt/shed-sidecar
 ```
 
-The release archive includes `sidecard`, `sidecarctl`, `install.sh`, and `README.md`. The script installs the binaries from its own directory, creates the `sidecar` system user, creates `<persistent-dir>/config.toml` if needed, generates `/etc/systemd/system/sidecar.service` configured to use that file, and enables the service.
+The release archive includes `shed-sidecard`, `shed-sidecar`, `install.sh`, and `README.md`. The script installs the binaries from its own directory, creates the `sidecar` system user, creates `<persistent-dir>/config.toml` if needed, generates `/etc/systemd/system/sidecar.service` configured to use that file, and enables the service.

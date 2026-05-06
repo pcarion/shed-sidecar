@@ -6,6 +6,7 @@ import (
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
 	"github.com/pcarion/shed-sidecar/internal/passwords"
+	"github.com/pcarion/shed-sidecar/internal/pghba"
 	"github.com/pcarion/shed-sidecar/internal/systemd"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,6 +22,9 @@ type PasswordStore interface {
 	List(ctx context.Context) ([]passwords.Entry, error)
 	NetworkPortGet(ctx context.Context, service, name string) (passwords.NetworkEntry, bool, error)
 	NetworkList(ctx context.Context) ([]passwords.NetworkEntry, error)
+	ParamSet(ctx context.Context, service, name, value string) error
+	ParamGet(ctx context.Context, service, name string) (string, bool, error)
+	ParamList(ctx context.Context) ([]passwords.ParamEntry, error)
 }
 
 type Server struct {
@@ -30,9 +34,10 @@ type Server struct {
 	passwords       PasswordStore
 	logger          *slog.Logger
 	allowedServices map[string]struct{}
+	configDir       string
 }
 
-func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.Logger, allowedServices []string) *Server {
+func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.Logger, allowedServices []string, configDir ...string) *Server {
 	allowed := map[string]struct{}{}
 	for _, service := range allowedServices {
 		if service != "" {
@@ -40,11 +45,16 @@ func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.
 			allowed[systemd.NormalizeUnitName(service)] = struct{}{}
 		}
 	}
+	cfgDir := "."
+	if len(configDir) > 0 && configDir[0] != "" {
+		cfgDir = configDir[0]
+	}
 	return &Server{
 		systemd:         systemdClient,
 		passwords:       passwordStore,
 		logger:          logger,
 		allowedServices: allowed,
+		configDir:       cfgDir,
 	}
 }
 
@@ -163,6 +173,65 @@ func (s *Server) NetworkList(ctx context.Context, req *sidecarv1.NetworkListRequ
 		})
 	}
 	return resp, nil
+}
+
+func (s *Server) ParamSet(ctx context.Context, req *sidecarv1.ParamSetRequest) (*sidecarv1.ParamSetResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	if err := s.passwords.ParamSet(ctx, req.GetServiceName(), req.GetName(), req.GetValue()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.ParamSetResponse{}, nil
+}
+
+func (s *Server) ParamGet(ctx context.Context, req *sidecarv1.ParamGetRequest) (*sidecarv1.ParamGetResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	value, ok, err := s.passwords.ParamGet(ctx, req.GetServiceName(), req.GetName())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "param %q for service %q was not found", req.GetName(), req.GetServiceName())
+	}
+	return &sidecarv1.ParamGetResponse{Value: value}, nil
+}
+
+func (s *Server) ParamList(ctx context.Context, req *sidecarv1.ParamListRequest) (*sidecarv1.ParamListResponse, error) {
+	if s.passwords == nil {
+		return nil, status.Error(codes.FailedPrecondition, "password store is not configured")
+	}
+	entries, err := s.passwords.ParamList(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	resp := &sidecarv1.ParamListResponse{}
+	var current *sidecarv1.ParamService
+	for _, entry := range entries {
+		if current == nil || current.ServiceName != entry.Service {
+			current = &sidecarv1.ParamService{ServiceName: entry.Service}
+			resp.Services = append(resp.Services, current)
+		}
+		current.Params = append(current.Params, &sidecarv1.ParamEntry{
+			Name:  entry.Name,
+			Value: entry.Value,
+		})
+	}
+	return resp, nil
+}
+
+func (s *Server) ConfigurePgHbaConf(ctx context.Context, req *sidecarv1.ConfigurePgHbaConfRequest) (*sidecarv1.ConfigurePgHbaConfResponse, error) {
+	isNew, err := pghba.Configure(req, s.configDir)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &sidecarv1.ConfigurePgHbaConfResponse{
+		IsValid: true,
+		IsNew:   isNew,
+	}, nil
 }
 
 func protoStatus(status systemd.Status, includeRaw bool) *sidecarv1.ServiceStatus {
