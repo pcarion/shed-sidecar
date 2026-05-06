@@ -176,3 +176,17 @@ func TestPrintParamList(t *testing.T) {
 		t.Fatalf("unexpected table:\n%s", got)
 	}
 }
+
+func TestPrintDockerStatus(t *testing.T) {
+	var out bytes.Buffer
+	printDockerStatus(&out, &sidecarv1.DockerStatusResponse{
+		Containers: []*sidecarv1.ContainerStatus{
+			{Name: "app", State: "running", Status: "Up 2 hours", Image: "postgres:16", Id: "abcdef012345"},
+		},
+	})
+
+	got := out.String()
+	if got != "NAME  STATE    STATUS      IMAGE        ID\napp   running  Up 2 hours  postgres:16  abcdef012345\n" {
+		t.Fatalf("unexpected table:\n%s", got)
+	}
+}

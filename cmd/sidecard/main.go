@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	dockerclient "github.com/docker/docker/client"
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
 	"github.com/pcarion/shed-sidecar/internal/config"
 	"github.com/pcarion/shed-sidecar/internal/passwords"
@@ -49,8 +50,15 @@ func main() {
 	}
 	defer passwordStore.Close()
 
+	dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		logger.Error("create docker client", "error", err)
+		os.Exit(1)
+	}
+	defer dockerClient.Close()
+
 	grpcServer := grpc.NewServer()
-	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), passwordStore, logger, cfg.AllowedServices, cfg.ConfigDir))
+	sidecarv1.RegisterSidecarServer(grpcServer, server.New(systemdstatus.NewClient(conn), passwordStore, logger, cfg.AllowedServices, cfg.ConfigDir, dockerClient))
 
 	tcpAddress := cfg.TCPAddress()
 	tcpListener, err := net.Listen("tcp", tcpAddress)

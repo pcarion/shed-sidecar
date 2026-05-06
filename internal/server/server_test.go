@@ -16,6 +16,7 @@ import (
 
 type fakeSystemd struct{}
 type fakePasswords struct{}
+type fakeDocker struct{}
 
 func (fakeSystemd) Status(_ context.Context, service string, includeRaw bool) (systemd.Status, error) {
 	if service == "bad.service" {
@@ -78,6 +79,12 @@ func (fakePasswords) ParamList(_ context.Context) ([]passwords.ParamEntry, error
 	}, nil
 }
 
+func (fakeDocker) Status(_ context.Context) ([]*sidecarv1.ContainerStatus, error) {
+	return []*sidecarv1.ContainerStatus{
+		{Name: "app", State: "running", Status: "Up 2 hours", Image: "postgres:16", Created: 42, Id: "abcdef012345"},
+	}, nil
+}
+
 func TestServiceStatusReturnsPerServiceErrors(t *testing.T) {
 	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
 
@@ -112,6 +119,30 @@ func TestServiceStatusAllowsBareNameWhenAllowedListUsesServiceSuffix(t *testing.
 	}
 	if resp.GetStatuses()[0].GetLoadState() == "error" {
 		t.Fatalf("bare service name was rejected: %+v", resp.GetStatuses()[0])
+	}
+}
+
+func TestDockerStatusReturnsContainers(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil, fakeDocker{})
+
+	resp, err := srv.DockerStatus(context.Background(), &sidecarv1.DockerStatusRequest{})
+	if err != nil {
+		t.Fatalf("DockerStatus returned error: %v", err)
+	}
+	if len(resp.GetContainers()) != 1 {
+		t.Fatalf("got %d containers, want 1", len(resp.GetContainers()))
+	}
+	container := resp.GetContainers()[0]
+	if container.GetName() != "app" || container.GetState() != "running" || container.GetStatus() != "Up 2 hours" || container.GetImage() != "postgres:16" || container.GetCreated() != 42 || container.GetId() != "abcdef012345" {
+		t.Fatalf("unexpected container: %+v", container)
+	}
+}
+
+func TestDockerStatusRequiresClient(t *testing.T) {
+	srv := New(fakeSystemd{}, fakePasswords{}, slog.Default(), nil)
+
+	if _, err := srv.DockerStatus(context.Background(), &sidecarv1.DockerStatusRequest{}); err == nil {
+		t.Fatal("DockerStatus returned nil error without docker client")
 	}
 }
 

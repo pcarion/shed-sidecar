@@ -139,6 +139,16 @@ The normal output is a compact table with a state symbol, service name, active s
 shed-sidecar status --verbose nginx.service
 ```
 
+### Docker Status
+
+List Docker containers on the VM:
+
+```sh
+shed-sidecar docker status
+```
+
+The output includes container name, state, human-readable status, image, and short container ID. The daemon uses the Docker SDK and lists all containers, including stopped containers.
+
 ### Passwords
 
 Create or return an idempotent password:
@@ -343,6 +353,18 @@ shed-sidecar conf get <file path> <space|equal|colon> <key>
 ```
 
 If `file_path` is relative, it is resolved relative to the directory containing `config.toml`.
+
+## Docker Status
+
+`shed-sidecard` implements `DockerStatus` from `shed-proto` using the Docker SDK. It connects to Docker using the standard Docker environment configuration and API version negotiation, then calls the Docker Engine API to list all containers.
+
+The CLI form is:
+
+```sh
+shed-sidecar docker status
+```
+
+The installer adds the `sidecar` user to the `docker` group when that group exists. Restart the service after Docker is installed or after group membership changes.
 
 ## Install From A Release
 

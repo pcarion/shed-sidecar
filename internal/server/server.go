@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	sidecarv1 "github.com/pcarion/shed-proto/gen/go/sidecar/v1"
+	"github.com/pcarion/shed-sidecar/internal/dockerstatus"
 	"github.com/pcarion/shed-sidecar/internal/keyvalue"
 	"github.com/pcarion/shed-sidecar/internal/passwords"
 	"github.com/pcarion/shed-sidecar/internal/pghba"
@@ -15,6 +16,10 @@ import (
 
 type SystemdClient interface {
 	Status(ctx context.Context, service string, includeRaw bool) (systemd.Status, error)
+}
+
+type DockerClient interface {
+	Status(ctx context.Context) ([]*sidecarv1.ContainerStatus, error)
 }
 
 type PasswordStore interface {
@@ -32,13 +37,14 @@ type Server struct {
 	sidecarv1.UnimplementedSidecarServer
 
 	systemd         SystemdClient
+	docker          DockerClient
 	passwords       PasswordStore
 	logger          *slog.Logger
 	allowedServices map[string]struct{}
 	configDir       string
 }
 
-func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.Logger, allowedServices []string, configDir ...string) *Server {
+func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.Logger, allowedServices []string, options ...any) *Server {
 	allowed := map[string]struct{}{}
 	for _, service := range allowedServices {
 		if service != "" {
@@ -47,11 +53,22 @@ func New(systemdClient SystemdClient, passwordStore PasswordStore, logger *slog.
 		}
 	}
 	cfgDir := "."
-	if len(configDir) > 0 && configDir[0] != "" {
-		cfgDir = configDir[0]
+	var docker DockerClient
+	for _, option := range options {
+		switch value := option.(type) {
+		case string:
+			if value != "" {
+				cfgDir = value
+			}
+		case DockerClient:
+			docker = value
+		case dockerstatus.ContainerLister:
+			docker = dockerstatus.New(value)
+		}
 	}
 	return &Server{
 		systemd:         systemdClient,
+		docker:          docker,
 		passwords:       passwordStore,
 		logger:          logger,
 		allowedServices: allowed,
@@ -87,6 +104,17 @@ func (s *Server) ServiceStatus(ctx context.Context, req *sidecarv1.ServiceStatus
 	}
 
 	return resp, nil
+}
+
+func (s *Server) DockerStatus(ctx context.Context, req *sidecarv1.DockerStatusRequest) (*sidecarv1.DockerStatusResponse, error) {
+	if s.docker == nil {
+		return nil, status.Error(codes.FailedPrecondition, "docker client is not configured")
+	}
+	containers, err := s.docker.Status(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &sidecarv1.DockerStatusResponse{Containers: containers}, nil
 }
 
 func (s *Server) PasswordGet(ctx context.Context, req *sidecarv1.PasswordGetRequest) (*sidecarv1.PasswordGetResponse, error) {

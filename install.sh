@@ -48,6 +48,9 @@ if ! id sidecar >/dev/null 2>&1; then
 fi
 
 usermod -aG systemd-journal sidecar
+if getent group docker >/dev/null 2>&1; then
+  usermod -aG docker sidecar
+fi
 
 if systemctl list-unit-files sidecar.service >/dev/null 2>&1; then
   systemctl stop sidecar.service

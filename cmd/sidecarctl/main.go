@@ -29,7 +29,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&address, "address", address, "shed-sidecard gRPC address")
-	root.AddCommand(statusCommand(), passwordCommand(), networkCommand(), paramCommand(), postgresCommand(), confCommand(), versionCommand())
+	root.AddCommand(statusCommand(), dockerCommand(), passwordCommand(), networkCommand(), paramCommand(), postgresCommand(), confCommand(), versionCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -70,6 +70,40 @@ func statusCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print raw systemctl status output")
 	return cmd
+}
+
+func dockerCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "docker",
+		Short: "Inspect Docker containers",
+	}
+	cmd.AddCommand(dockerStatusCommand())
+	return cmd
+}
+
+func dockerStatusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Print Docker container status",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			conn, err := dial()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			resp, err := sidecarv1.NewSidecarClient(conn).DockerStatus(ctx, &sidecarv1.DockerStatusRequest{})
+			if err != nil {
+				return fmt.Errorf("docker status RPC: %w", err)
+			}
+			printDockerStatus(cmd.OutOrStdout(), resp)
+			return nil
+		},
+	}
 }
 
 func passwordCommand() *cobra.Command {
@@ -632,6 +666,21 @@ func printParamList(out io.Writer, resp *sidecarv1.ParamListResponse) {
 		for _, param := range service.GetParams() {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", service.GetServiceName(), param.GetName(), param.GetValue())
 		}
+	}
+	_ = w.Flush()
+}
+
+func printDockerStatus(out io.Writer, resp *sidecarv1.DockerStatusResponse) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSTATE\tSTATUS\tIMAGE\tID")
+	for _, container := range resp.GetContainers() {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			container.GetName(),
+			container.GetState(),
+			container.GetStatus(),
+			container.GetImage(),
+			container.GetId(),
+		)
 	}
 	_ = w.Flush()
 }
